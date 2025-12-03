@@ -1,0 +1,7 @@
+{
+  "name": "AI Travel Planner",
+  "description": "A smart travel itinerary planner with drag-and-drop organization, interactive maps, and Gemini-powered assistance.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
