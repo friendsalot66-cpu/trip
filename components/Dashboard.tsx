@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { Trip } from '../types';
 import { Calendar, MapPin, Plus, Trash2, ArrowRight, Database, AlertCircle, CheckCircle, Sparkles, Camera, Loader2 } from 'lucide-react';
