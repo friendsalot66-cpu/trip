@@ -24,6 +24,11 @@ const MODEL_NAME = 'sonar-reasoning-pro';
  * 核心函式：呼叫 Perplexity API
  */
 async function callPerplexityAPI(messages: any[], context: string) {
+  
+  console.log(`[${context}] Starting API Call...`);
+  console.log(`[${context}] API_KEY present?`, !!API_KEY); // 印出 true 或 false
+  console.log(`[${context}] API_KEY length:`, API_KEY ? API_KEY.length : 0);
+  
   if (!API_KEY) {
     console.error("API Key is missing! Please check .env");
     throw new Error("Missing API Key.");
