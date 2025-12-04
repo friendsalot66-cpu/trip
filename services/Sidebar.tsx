@@ -62,10 +62,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isEditingDayTitle, setIsEditingDayTitle] = useState(false);
   const [editedDayTitle, setEditedDayTitle] = useState('');
 
-  // Calculate active day first so it's available for useEffect
-  const activeDayIndex = days.findIndex(d => d.dayId === activeDayId);
-  const activeDay = days[activeDayIndex];
-
   // Update local title state if prop changes
   useEffect(() => {
     setEditedTitle(tripTitle || '');
@@ -93,6 +89,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     isOpen: boolean;
     data: Partial<Place>;
   }>({ isOpen: false, data: {} });
+
+  const activeDayIndex = days.findIndex(d => d.dayId === activeDayId);
+  const activeDay = days[activeDayIndex];
 
   const { setNodeRef } = useDroppable({
     id: activeDayId,
