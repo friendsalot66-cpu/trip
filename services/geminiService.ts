@@ -1,303 +1,221 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Place, DayItinerary, PlaceType } from "../types";
 
-// Initialize Gemini AI Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * ============================================================
+ *  PERPLEXITY AI SERVICE (Replacing Gemini)
+ * ============================================================
+ * 
+ * 注意：我們保留了原本的檔名 geminiService.ts 以避免破壞專案結構。
+ * 但底層邏輯已經切換為 Perplexity (Sonar) API。
+ * 
+ * 設定：
+ * 你的 .env 檔案中原本應該是 API_KEY=... (Gemini Key)
+ * 現在請把那個 API_KEY 的值換成你的 Perplexity Key (pplx-...)
+ * 或者你可以新增一個 VITE_PERPLEXITY_API_KEY 並把下面這行改掉。
+ */
 
-const MODEL_NAME = 'gemini-2.5-flash';
+// 優先讀取 VITE_PERPLEXITY_API_KEY，如果沒有就讀取原本的 API_KEY
+const API_KEY = import.meta.env.VITE_PERPLEXITY_API_KEY || import.meta.env.API_KEY || '';
 
-// Helper to clean Markdown from JSON string (e.g. ```json ... ```)
+// Perplexity 推薦的模型，適合邏輯推理和規劃
+const MODEL_NAME = 'sonar-reasoning-pro'; 
+
+/**
+ * 核心函式：呼叫 Perplexity API
+ */
+async function callPerplexityAPI(messages: any[], context: string) {
+  if (!API_KEY) {
+    console.error("API Key is missing! Please check .env");
+    throw new Error("Missing API Key.");
+  }
+
+  try {
+    const response = await fetch('https://api.perplexity.ai/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: MODEL_NAME,
+        messages: messages,
+        // 溫度設為 0.2 讓輸出更穩定
+        temperature: 0.2, 
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Perplexity API Error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    const rawContent = data.choices[0]?.message?.content || "{}";
+    
+    return cleanJson(rawContent);
+  } catch (error) {
+    console.error(`AI Request Failed [${context}]:`, error);
+    throw error;
+  }
+}
+
+// JSON 清理小工具 (防止 AI 講廢話)
 const cleanJson = (text: string) => {
   if (!text) return "{}";
-  // Remove markdown code blocks
-  return text.replace(/```json\s*|\s*```/g, "").trim();
+  // 移除 Markdown 語法 (``````)
+  let cleaned = text.replace(/``````/g, "").trim();
+  
+  // 嘗試只抓取真正的 JSON 部分 (從第一個 { 或 [ 開始，到最後一個 } 或 ] 結束)
+  const firstOpen = cleaned.search(/[{[]/);
+  const lastClose = cleaned.search(/[}]]$/); 
+  
+  if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+      cleaned = cleaned.substring(firstOpen, lastClose + 1);
+  }
+  
+  return cleaned;
 };
 
 /**
- * Search for places using Gemini
+ * 1. 搜尋地點 (Search Places)
+ * 對應原本的 findPlacesWithAI
  */
-export const findPlacesWithAI = async (query: string, currentCenter?: { lat: number, lng: number }): Promise<Partial<Place>[]> => {
-  const prompt = `
-    Task: Search for real-world places based on the query: "${query}".
-    Location Context: Near Lat ${currentCenter?.lat}, Lng ${currentCenter?.lng}.
-    
-    Instructions:
-    1. Find 3-5 real places matching the query.
-    2. You MUST provide estimated Latitude and Longitude for each place.
-    3. If the query is ambiguous, suggest the most popular relevant locations.
-  `;
+export const findPlacesWithAI = async (query: string, currentCenter?: { lat: number, lng: number }): Promise<any[]> => {
+  const systemPrompt = `You are a travel assistant. Output strictly valid JSON only. No markdown, no conversational text.
+  Response format: { "candidates": [{ "name": "string", "lat": number, "lng": number, "address": "string", "remarks": "string" }] }`;
+
+  const userPrompt = `Find 3-5 real places for: "${query}".
+  Context: Near Lat ${currentCenter?.lat || 'N/A'}, Lng ${currentCenter?.lng || 'N/A'}.
+  Return JSON only.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            candidates: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  lat: { type: Type.NUMBER },
-                  lng: { type: Type.NUMBER },
-                  address: { type: Type.STRING },
-                  remarks: { type: Type.STRING },
-                },
-                required: ['name', 'lat', 'lng'],
-              },
-            },
-          },
-        },
-      },
-    });
-
-    const json = JSON.parse(cleanJson(response.text || "{}"));
+    const jsonString = await callPerplexityAPI(
+      [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+      "findPlacesWithAI"
+    );
+    const json = JSON.parse(jsonString);
     return json.candidates || [];
   } catch (error) {
-    console.error("Gemini Search Error:", error);
-    return [];
+    return []; // 失敗時回傳空陣列，避免畫面 crash
   }
 };
 
 /**
- * Generate Full Itinerary
+ * 2. 生成行程 (Generate Itinerary)
+ * 對應原本的 generateItineraryWithAI
  */
 export const generateItineraryWithAI = async (prompt: string, daysCount: number): Promise<DayItinerary[]> => {
-  const userPrompt = `
-    Request: "${prompt}"
-    
-    Requirements:
-    1. Organize into exactly ${daysCount} days.
-    2. Provide realistic coordinates (lat/lng) for every place.
-    3. Ensure logical flow and order.
-    4. Return a JSON array of day objects.
-  `;
+  const systemPrompt = `You are a professional travel planner. Output strictly valid JSON only.
+  Response format: Array of objects. Example:
+  [
+    {
+      "dayId": "day-1", "title": "Theme",
+      "places": [{ "name": "string", "lat": number, "lng": number, "type": "activity", "time": "09:00", "remarks": "desc" }]
+    }
+  ]`;
+
+  const userPrompt = `Plan a ${daysCount}-day trip. Request: "${prompt}".
+  Requirements: Real coordinates, logical route, exactly ${daysCount} days.
+  Return JSON Array only.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              dayId: { type: Type.STRING },
-              title: { type: Type.STRING },
-              places: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER },
-                    remarks: { type: Type.STRING },
-                    address: { type: Type.STRING },
-                    type: { type: Type.STRING, description: "One of 'activity', 'flight', 'hotel'" },
-                    time: { type: Type.STRING },
-                  },
-                  required: ['name', 'lat', 'lng', 'type'],
-                },
-              },
-            },
-            required: ['dayId', 'title', 'places'],
-          },
-        },
-      },
-    });
+    const jsonString = await callPerplexityAPI(
+      [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+      "generateItineraryWithAI"
+    );
 
-    const rawData = JSON.parse(cleanJson(response.text || "[]"));
+    let rawData = JSON.parse(jsonString);
+    if (!Array.isArray(rawData) && rawData.days) rawData = rawData.days; // 容錯處理
 
-    // Post-process to ensure IDs exist
+    // 補上 ID 防止前端報錯
     return rawData.map((day: any, index: number) => ({
       ...day,
       dayId: day.dayId || `day-${index + 1}`,
-      places: day.places.map((p: any) => ({
+      places: (day.places || []).map((p: any) => ({
         ...p,
         id: crypto.randomUUID(),
         type: p.type || 'activity'
       }))
     }));
   } catch (error) {
-    console.error("Gemini Planning Error:", error);
+    console.error("Planning Error:", error);
     throw error;
   }
 };
 
 /**
- * Optimize Itinerary
+ * 3. 優化行程 (Optimize Itinerary)
+ * 對應原本的 optimizeItineraryWithAI
  */
 export const optimizeItineraryWithAI = async (
-  currentItinerary: DayItinerary[], 
-  scope: 'day' | 'trip', 
+  currentItinerary: DayItinerary[],
+  scope: 'day' | 'trip',
   activeDayId: string,
   constraints: string
 ): Promise<DayItinerary[]> => {
   
-  const userPrompt = `
-    You are a logistics expert. Optimize the itinerary order.
-    Scope: ${scope === 'day' ? `Only optimize dayId: ${activeDayId}` : "Optimize entire trip"}
-    Constraints: ${constraints || "Minimize travel time"}
-    
-    Input JSON:
-    ${JSON.stringify(currentItinerary.map(d => ({
-      dayId: d.dayId,
-      title: d.title,
-      date: d.date,
-      places: d.places.map(p => ({
-        name: p.name,
-        lat: p.lat,
-        lng: p.lng,
-        type: p.type,
-        time: p.time,
-        remarks: p.remarks
-      }))
-    })))}
+  const systemPrompt = `You are a logistics expert. Reorder the places to minimize travel time. Return strictly valid JSON only. Same structure as input.`;
 
-    Return the EXACT same JSON structure (Array of DayItinerary) but with reordered places.
-    Do not remove places.
+  const userPrompt = `
+    Scope: ${scope === 'day' ? `Optimize dayId: ${activeDayId}` : "Optimize whole trip"}
+    Constraints: ${constraints || "Logistical flow"}
+    Input JSON: ${JSON.stringify(currentItinerary)}
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              dayId: { type: Type.STRING },
-              title: { type: Type.STRING },
-              date: { type: Type.STRING },
-              places: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER },
-                    remarks: { type: Type.STRING },
-                    type: { type: Type.STRING },
-                    time: { type: Type.STRING },
-                  },
-                  required: ['name', 'lat', 'lng'],
-                },
-              },
-            },
-            required: ['dayId', 'places'],
-          },
-        },
-      },
-    });
+    const jsonString = await callPerplexityAPI(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+        "optimizeItineraryWithAI"
+    );
 
-    const optimized = JSON.parse(cleanJson(response.text || "[]"));
-    
-    // We re-add IDs just in case they were stripped to save context window
+    let optimized = JSON.parse(jsonString);
+    if (!Array.isArray(optimized) && optimized.days) optimized = optimized.days;
+
     return optimized.map((day: any) => ({
-        ...day,
-        places: day.places.map((p: any) => ({
-            ...p,
-            id: crypto.randomUUID(),
-            type: p.type as PlaceType || 'activity'
-        }))
+      ...day,
+      places: (day.places || []).map((p: any) => ({
+        ...p,
+        id: crypto.randomUUID(),
+        type: (p.type as PlaceType) || 'activity'
+      }))
     }));
   } catch (error) {
-    console.error("Gemini Optimization Error:", error);
+    console.error("Optimization Error:", error);
     throw error;
   }
 };
 
 /**
- * Parse Text to Itinerary
+ * 4. 解析文字 (Parse Text)
+ * 對應原本的 parseItineraryFromText
  */
 export const parseItineraryFromText = async (text: string): Promise<{ destination: string, startDate: string, endDate: string, days: DayItinerary[] }> => {
-  const userPrompt = `
-    Task: Parse structured travel data from the text below.
-    
-    Raw Text:
-    "${text}"
-    
-    Instructions:
-    1. Parse dates, times, and places.
-    2. Estimate coordinates (lat/lng) for every place based on the city name.
-    3. If year is missing, assume upcoming travel dates.
-    4. Return JSON matching the schema.
-  `;
+  const systemPrompt = `You are a parser. Extract travel data into strictly valid JSON.
+  Format: { "destination": "string", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "days": [...] }`;
+
+  const userPrompt = `Raw text: "${text}". Return JSON only.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            destination: { type: Type.STRING },
-            startDate: { type: Type.STRING, description: "YYYY-MM-DD" },
-            endDate: { type: Type.STRING, description: "YYYY-MM-DD" },
-            days: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  dayId: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  date: { type: Type.STRING, description: "YYYY-MM-DD" },
-                  places: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        name: { type: Type.STRING },
-                        lat: { type: Type.NUMBER },
-                        lng: { type: Type.NUMBER },
-                        remarks: { type: Type.STRING },
-                        type: { type: Type.STRING, description: "One of 'activity', 'hotel', 'flight'" },
-                        time: { type: Type.STRING },
-                      },
-                      required: ['name', 'lat', 'lng'],
-                    },
-                  },
-                },
-                required: ['dayId', 'places'],
-              },
-            },
-          },
-          required: ['destination', 'startDate', 'endDate', 'days'],
-        },
-      },
-    });
+    const jsonString = await callPerplexityAPI(
+        [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+        "parseItineraryFromText"
+    );
 
-    const parsed = JSON.parse(cleanJson(response.text || "{}"));
-    
-    // Add IDs
+    const parsed = JSON.parse(jsonString);
     if (parsed.days) {
       parsed.days = parsed.days.map((day: any, idx: number) => ({
         ...day,
         dayId: day.dayId || `day-${idx + 1}`,
-        places: day.places.map((p: any) => ({
+        places: (day.places || []).map((p: any) => ({
           ...p,
           id: crypto.randomUUID(),
           type: p.type || 'activity'
         }))
       }));
     }
-
     return parsed;
   } catch (error) {
-    console.error("Gemini Parsing Error:", error);
+    console.error("Parsing Error:", error);
     throw error;
   }
 };
