@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
-import { Plus, Map as MapIcon, Sparkles, Search, Loader2, Plane, X, Pencil, Cloud, CheckCircle, RotateCcw, Wand2, ArrowUpDown, MapPin, ArrowLeft } from 'lucide-react';
+import { Plus, Map as MapIcon, Sparkles, Search, Loader2, Plane, X, Pencil, Cloud, CheckCircle, RotateCcw, Wand2, ArrowUpDown, MapPin, ArrowLeft, MoreHorizontal, FileDown, CalendarDays, ArrowRight, Printer, Wallet } from 'lucide-react';
 import { DayItinerary, Place, PlaceType } from '../types';
 import { PlaceCard } from './PlaceCard';
-import { findPlacesWithAI, generateItineraryWithAI } from '../services/geminiService';
+import { findPlacesWithAI, generateItineraryWithAI, getStopoverRecommendations, generateMarkdown } from '../services/geminiService';
 
 interface SidebarProps {
   days: DayItinerary[];
@@ -26,6 +26,9 @@ interface SidebarProps {
   onToggleEditMode: () => void;
   onUpdateDayTitle: (dayId: string, newTitle: string) => void;
   onBack: () => void;
+  onMoveDay: (fromIndex: number, toIndex: number) => void;
+  // New props
+  onShowStopovers: (candidates: Place[]) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -47,7 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isEditMode,
   onToggleEditMode,
   onUpdateDayTitle,
-  onBack
+  onBack,
+  onMoveDay,
+  onShowStopovers
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -61,37 +66,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isEditingDayTitle, setIsEditingDayTitle] = useState(false);
   const [editedDayTitle, setEditedDayTitle] = useState('');
 
-  // Calculate active day first so it's available for useEffect
-  const activeDayIndex = days.findIndex(d => d.dayId === activeDayId);
-  const activeDay = days[activeDayIndex];
-
-  // Update local title state if prop changes
-  useEffect(() => {
-    setEditedTitle(tripTitle || '');
-  }, [tripTitle]);
-  
-  // When active day changes, reset editable day title
-  useEffect(() => {
-    if (activeDay) {
-        setEditedDayTitle(activeDay.title);
-        setIsEditingDayTitle(false);
-    }
-  }, [activeDayId, days]); // Trigger when ID changes or days update
-
-  // --- Modals State ---
+  // Modals
   const [showAIModal, setShowAIModal] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
-
-  // Optimization Modal State
   const [showOptimizeModal, setShowOptimizeModal] = useState(false);
   const [optimizeScope, setOptimizeScope] = useState<'day' | 'trip'>('day');
   const [optimizeConstraints, setOptimizeConstraints] = useState('');
+  const [showManageDays, setShowManageDays] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  
+  // Stopover Loading State
+  const [isFindingStopover, setIsFindingStopover] = useState<string | null>(null); // holds place ID
 
   const [placeModal, setPlaceModal] = useState<{
     isOpen: boolean;
     data: Partial<Place>;
   }>({ isOpen: false, data: {} });
+
+  const activeDayIndex = days.findIndex(d => d.dayId === activeDayId);
+  const activeDay = activeDayIndex >= 0 ? days[activeDayIndex] : null;
+
+  useEffect(() => {
+    setEditedTitle(tripTitle || '');
+  }, [tripTitle]);
+  
+  useEffect(() => {
+    if (activeDay) {
+        setEditedDayTitle(activeDay.title);
+        setIsEditingDayTitle(false);
+    }
+  }, [activeDayId, days]);
 
   const { setNodeRef } = useDroppable({
     id: activeDayId,
@@ -105,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (editedTitle.trim()) {
       onUpdateTitle(editedTitle);
     } else {
-      setEditedTitle(tripTitle || ''); // Revert if empty
+      setEditedTitle(tripTitle || ''); 
     }
     setIsEditingTitle(false);
   };
@@ -130,10 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const results = await findPlacesWithAI(searchQuery, mapCenter);
     setIsSearching(false);
     
-    // Show results dropdown
-    if (results.length > 0) {
-        setSearchResults(results);
-    }
+    if (results.length > 0) setSearchResults(results);
   };
 
   const addPlaceDirectly = (partialPlace: Partial<Place>, type: PlaceType = 'activity') => {
@@ -151,6 +153,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         time: partialPlace.time
     };
     onAddPlace(newPlace);
+    // Clear stopovers from map when adding a new place to avoid clutter
+    onShowStopovers([]);
   };
 
   const openEditModal = (place: Place) => {
@@ -164,7 +168,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     e.preventDefault();
     if (!placeModal.data.name || !placeModal.data.id) return;
 
-    onUpdatePlace(activeDayId, placeModal.data as Place);
+    const updatedData = { ...placeModal.data };
+    if (updatedData.expenses && typeof updatedData.expenses.amount === 'string') {
+        updatedData.expenses.amount = parseFloat(updatedData.expenses.amount);
+    }
+
+    onUpdatePlace(activeDayId, updatedData as Place);
     setPlaceModal({ isOpen: false, data: {} });
   };
 
@@ -190,7 +199,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setOptimizeConstraints('');
   };
 
-  // Calculate generic index (excluding flights)
+  const handleFindStopover = async (place: Place) => {
+    const currentIndex = activeDay?.places.findIndex(p => p.id === place.id) ?? -1;
+    if (currentIndex === -1 || !activeDay || currentIndex === activeDay.places.length - 1) {
+        alert("Please select a place that is not the last one in the list to find a stopover.");
+        return;
+    }
+    const nextPlace = activeDay.places[currentIndex + 1];
+    
+    setIsFindingStopover(place.id);
+    try {
+        // Requirement 2: Loading Status (handled by state)
+        // Requirement 1: Show on map (handled by onShowStopovers)
+        const recommendations = await getStopoverRecommendations(place, nextPlace);
+        if (recommendations.length > 0) {
+            const mappedRecommendations = recommendations.map(r => ({
+                id: crypto.randomUUID(),
+                name: r.name || 'Unknown',
+                lat: r.lat || 0,
+                lng: r.lng || 0,
+                remarks: r.remarks || '',
+                address: r.address,
+                type: 'activity' as PlaceType
+            }));
+            onShowStopovers(mappedRecommendations);
+        } else {
+            alert("No recommendations found.");
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Error finding stopovers");
+    } finally {
+        setIsFindingStopover(null);
+    }
+  };
+
+  const handleExport = (format: 'json' | 'md' | 'print') => {
+      if (format === 'json') {
+          const blob = new Blob([JSON.stringify(days, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${tripTitle || 'trip'}.json`;
+          a.click();
+      } else if (format === 'md') {
+          const md = generateMarkdown(tripTitle || 'Trip', days);
+          const blob = new Blob([md], { type: 'text/markdown' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${tripTitle || 'trip'}.md`;
+          a.click();
+      } else {
+          // Requirement 4: Export PDF / Print Function
+          // The CSS @media print handles the visibility of the .print-only section
+          window.print();
+      }
+      setShowExportMenu(false);
+  };
+
   const getPlaceIndex = (placeId: string) => {
     if (!activeDay) return undefined;
     const nonFlightPlaces = activeDay.places.filter(p => p.type !== 'flight');
@@ -198,25 +265,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return index !== -1 ? index + 1 : undefined;
   };
 
+  const isOverview = activeDayId === 'overview';
+
   return (
-    <div className="flex flex-col h-full bg-slate-50 border-r border-slate-200">
+    <>
+    {/* Hidden Print-Only View (Requirement 4) */}
+    <div className="print-only p-10 bg-white">
+        <h1 className="text-3xl font-bold mb-4">{tripTitle}</h1>
+        {days.map((day, idx) => (
+            <div key={day.dayId} className="mb-8 break-inside-avoid">
+                <h2 className="text-xl font-bold border-b pb-2 mb-4 bg-gray-100 p-2 rounded">Day {idx + 1}: {day.title} ({day.date})</h2>
+                <ul className="space-y-4">
+                    {day.places.map((place, pIdx) => (
+                        <li key={place.id} className="flex gap-4 border-l-4 border-gray-300 pl-4 py-1">
+                            <div className="font-bold text-gray-500 w-16">{place.time || '--:--'}</div>
+                            <div>
+                                <div className="font-bold text-lg">{place.name} <span className="text-xs uppercase bg-gray-200 px-1 rounded">{place.type}</span></div>
+                                <div className="text-gray-600">{place.remarks}</div>
+                                {place.expenses && <div className="text-sm text-gray-800 font-mono">Cost: {place.expenses.currency} {place.expenses.amount}</div>}
+                                {place.travelTime && <div className="text-xs text-gray-500 mt-1 italic">🚗 Travel: {place.travelTime}</div>}
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            </div>
+        ))}
+    </div>
+
+    <div className="flex flex-col h-full bg-slate-50 border-r border-slate-200 print:hidden sidebar-container">
       {/* Header */}
-      <div className="p-4 bg-white border-b border-slate-200">
+      <div className="p-4 bg-white border-b border-slate-200 sidebar-header">
         <div className="flex items-center justify-between mb-4">
           <div className="flex flex-1 min-w-0 mr-4 items-center gap-2">
-            <button 
-                onClick={onBack}
-                className="p-1.5 -ml-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
-                title="Back to Dashboard"
-            >
+            <button onClick={onBack} className="p-1.5 -ml-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors">
                 <ArrowLeft size={20} />
             </button>
             <div className="min-w-0">
-                <h1 className="text-xs font-bold text-brand-600 flex items-center gap-1 uppercase tracking-wider mb-0.5">
-                    TripPlanner
-                </h1>
-                
-                {/* Editable Title */}
+                <h1 className="text-xs font-bold text-brand-600 flex items-center gap-1 uppercase tracking-wider mb-0.5">TripPlanner</h1>
                 {isEditingTitle ? (
                 <form onSubmit={handleTitleSubmit} className="flex items-center">
                     <input 
@@ -229,23 +314,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     />
                 </form>
                 ) : (
-                <div 
-                    onClick={() => setIsEditingTitle(true)}
-                    className="group flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded pl-1 py-0.5"
-                >
+                <div onClick={() => setIsEditingTitle(true)} className="group flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded pl-1 py-0.5">
                     <p className="text-sm font-bold text-slate-900 truncate max-w-[150px]">{tripTitle || 'My Trip'}</p>
                     <Pencil size={12} className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                    
-                    {/* Save Status Indicator - Inline with title */}
                     <div className="flex items-center gap-1 ml-1 flex-shrink-0">
                         {isSaving ? (
-                            <span className="flex items-center gap-1 text-[10px] text-brand-500 font-medium animate-pulse">
-                                <Cloud size={10} />
-                            </span>
+                            <span className="text-[10px] text-brand-500 font-medium animate-pulse"><Cloud size={10} /></span>
                         ) : (
-                            <span className="flex items-center gap-1 text-[10px] text-slate-300 font-medium">
-                                <CheckCircle size={10} />
-                            </span>
+                            <span className="text-[10px] text-slate-300 font-medium"><CheckCircle size={10} /></span>
                         )}
                     </div>
                 </div>
@@ -254,169 +330,210 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
            
            <div className="flex items-center gap-2 flex-shrink-0">
-             {/* Reorder/Edit Toggle */}
-             <button
-                onClick={onToggleEditMode}
-                title={isEditMode ? "Finish Reordering" : "Reorder List"}
-                className={`p-1.5 rounded-full transition-colors ${
-                  isEditMode 
-                    ? 'bg-brand-100 text-brand-600' 
-                    : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-                }`}
-             >
+             <button onClick={onToggleEditMode} title={isEditMode ? "Finish Reordering" : "Reorder List"} className={`p-1.5 rounded-full transition-colors ${isEditMode ? 'bg-brand-100 text-brand-600' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
                 <ArrowUpDown size={16} />
              </button>
-
              {canUndo && (
-               <button 
-                 onClick={onUndo}
-                 title="Undo last change"
-                 className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors"
-               >
+               <button onClick={onUndo} title="Undo last change" className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors">
                  <RotateCcw size={16} />
                </button>
              )}
-             <button 
-              onClick={() => setShowAIModal(true)}
-              className="flex items-center gap-1 text-xs font-medium text-purple-600 bg-purple-50 px-2.5 py-1.5 rounded-full border border-purple-100 hover:bg-purple-100 transition-colors"
-            >
-              <Sparkles size={12} />
-              New
-            </button>
+             
+             {/* Export Menu Trigger */}
+             <div className="relative">
+                 <button onClick={() => setShowExportMenu(!showExportMenu)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors">
+                    <MoreHorizontal size={16} />
+                 </button>
+                 {showExportMenu && (
+                     <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-xl border border-slate-100 z-50 py-1">
+                         <button onClick={() => handleExport('json')} className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-slate-50">
+                            <FileDown size={14} /> Export JSON
+                         </button>
+                         <button onClick={() => handleExport('md')} className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-slate-50">
+                            <FileDown size={14} /> Export Markdown
+                         </button>
+                         <button onClick={() => handleExport('print')} className="flex items-center gap-2 w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-slate-50">
+                            <Printer size={14} /> Print / PDF
+                         </button>
+                     </div>
+                 )}
+             </div>
            </div>
         </div>
         
         {/* Day Tabs */}
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-          {days.map((day, idx) => (
+        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide tabs-container">
+            {/* Overview Tab */}
             <button
-              key={day.dayId}
-              onClick={() => setActiveDayId(day.dayId)}
-              className={`
-                flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all text-left min-w-[80px]
-                ${activeDayId === day.dayId 
-                  ? 'bg-brand-600 text-white shadow-md' 
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}
-              `}
+                onClick={() => setActiveDayId('overview')}
+                className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all text-left min-w-[80px]
+                    ${activeDayId === 'overview' ? 'bg-brand-600 text-white shadow-md' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}
+                `}
             >
-              <div className="text-[10px] opacity-80 uppercase tracking-wide">Day {idx + 1}</div>
-              <div>{day.date}</div>
+                 <div className="text-[10px] opacity-80 uppercase tracking-wide">Trip</div>
+                 <div>Overview</div>
             </button>
-          ))}
+
+            {days.map((day, idx) => (
+                <button
+                key={day.dayId}
+                onClick={() => setActiveDayId(day.dayId)}
+                className={`
+                    flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all text-left min-w-[80px]
+                    ${activeDayId === day.dayId 
+                    ? 'bg-brand-600 text-white shadow-md' 
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'}
+                `}
+                >
+                <div className="text-[10px] opacity-80 uppercase tracking-wide">Day {idx + 1}</div>
+                <div>{day.date}</div>
+                </button>
+            ))}
+            
+            <button 
+                onClick={() => setShowManageDays(true)}
+                className="flex-shrink-0 p-2 rounded-lg border border-dashed border-slate-300 text-slate-400 hover:text-brand-600 hover:border-brand-300 hover:bg-brand-50 transition-colors"
+                title="Manage Days"
+            >
+                <CalendarDays size={18} />
+            </button>
         </div>
       </div>
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-4 relative">
-        <div className="flex items-center justify-between mb-4">
-            {/* Editable Day Title */}
-            {isEditingDayTitle ? (
-                <form onSubmit={handleDayTitleSubmit} className="flex-1 mr-2">
-                    <input 
-                        autoFocus
-                        type="text"
-                        value={editedDayTitle}
-                        onChange={(e) => setEditedDayTitle(e.target.value)}
-                        onBlur={() => handleDayTitleSubmit()}
-                        className="w-full text-lg font-bold text-slate-800 border-b border-brand-500 outline-none bg-transparent"
-                    />
-                </form>
-            ) : (
-                 <h2 
-                    onClick={() => setIsEditingDayTitle(true)}
-                    className="text-lg font-bold text-slate-800 flex items-center gap-2 cursor-pointer hover:bg-slate-50 px-1 -ml-1 rounded transition-colors group"
-                 >
-                    {activeDay?.title}
-                    <Pencil size={12} className="text-slate-300 opacity-0 group-hover:opacity-100" />
-                 </h2>
-            )}
-             
-             <div className="flex gap-2">
-                <button 
-                    onClick={() => setShowOptimizeModal(true)}
-                    className="flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded hover:bg-amber-100 transition-colors"
-                    title="Reorder places for best route"
-                >
-                    <Wand2 size={14} /> Optimize
-                </button>
-                <button 
-                    onClick={() => addPlaceDirectly({ name: 'Flight', remarks: 'Flight details' }, 'flight')} 
-                    className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-brand-600 bg-white border border-slate-200 px-2 py-1 rounded hover:bg-brand-50 transition-colors"
-                >
-                    <Plane size={14} /> Flight
-                </button>
-             </div>
-        </div>
-
-        {/* Standard Place Search */}
-        <form onSubmit={handleSearch} className="mb-6 relative">
-            <div className="relative">
-                <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Find activity, hotel, or place..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition-all text-sm shadow-sm bg-white text-gray-900"
-                />
-                <Search className="absolute left-3 top-3 text-slate-400" size={14} />
-                <button 
-                    type="submit"
-                    disabled={isSearching || !searchQuery}
-                    className="absolute right-2 top-2 p-1 bg-brand-50 text-brand-600 rounded hover:bg-brand-100 disabled:opacity-50 transition-colors"
-                >
-                    {isSearching ? <Loader2 className="animate-spin" size={14} /> : <Plus size={14} />}
-                </button>
-            </div>
-            
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden">
-                    <div className="p-2 bg-slate-50 text-xs font-semibold text-slate-500 border-b flex justify-between">
-                        <span>Select a location</span>
-                        <button onClick={() => setSearchResults([])}><X size={12}/></button>
-                    </div>
-                    <ul className="max-h-60 overflow-y-auto">
-                        {searchResults.map((result, idx) => (
-                            <li key={idx}>
-                                <button 
-                                    onClick={() => addPlaceDirectly(result, 'activity')}
-                                    className="w-full text-left p-3 hover:bg-brand-50 transition-colors border-b border-slate-50 last:border-0"
-                                >
-                                    <div className="font-medium text-slate-800 text-sm">{result.name}</div>
-                                    <div className="text-xs text-slate-500 truncate">{result.address}</div>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
+        {isOverview ? (
+             <div className="text-center py-10">
+                <h2 className="text-xl font-bold text-slate-800 mb-2">Trip Overview</h2>
+                <p className="text-sm text-slate-500 mb-6">Showing all locations on the map.</p>
+                <div className="space-y-4 max-w-sm mx-auto text-left">
+                    {days.map((day, idx) => (
+                        <div key={day.dayId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-200 hover:shadow-md transition-all" onClick={() => setActiveDayId(day.dayId)}>
+                             <h4 className="font-bold text-slate-800">Day {idx+1}: {day.title}</h4>
+                             <p className="text-xs text-slate-500 mt-1">{day.places.length} places • {day.date}</p>
+                        </div>
+                    ))}
                 </div>
-            )}
-        </form>
+            </div>
+        ) : (
+            <>
+                <div className="flex items-center justify-between mb-4">
+                    {isEditingDayTitle ? (
+                        <form onSubmit={handleDayTitleSubmit} className="flex-1 mr-2">
+                            <input 
+                                autoFocus
+                                type="text"
+                                value={editedDayTitle}
+                                onChange={(e) => setEditedDayTitle(e.target.value)}
+                                onBlur={() => handleDayTitleSubmit()}
+                                className="w-full text-lg font-bold text-slate-800 border-b border-brand-500 outline-none bg-transparent"
+                            />
+                        </form>
+                    ) : (
+                        <h2 
+                            onClick={() => setIsEditingDayTitle(true)}
+                            className="text-lg font-bold text-slate-800 flex items-center gap-2 cursor-pointer hover:bg-slate-50 px-1 -ml-1 rounded transition-colors group"
+                        >
+                            {activeDay?.title}
+                            <Pencil size={12} className="text-slate-300 opacity-0 group-hover:opacity-100" />
+                        </h2>
+                    )}
+                    
+                    <div className="flex gap-2">
+                        <button 
+                            onClick={() => setShowOptimizeModal(true)}
+                            className="flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 bg-amber-50 border border-amber-100 px-2 py-1 rounded hover:bg-amber-100 transition-colors"
+                            title="Reorder places for best route"
+                        >
+                            <Wand2 size={14} /> Optimize
+                        </button>
+                        <button 
+                            onClick={() => addPlaceDirectly({ name: 'Flight', remarks: 'Flight details' }, 'flight')} 
+                            className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-brand-600 bg-white border border-slate-200 px-2 py-1 rounded hover:bg-brand-50 transition-colors"
+                        >
+                            <Plane size={14} /> Flight
+                        </button>
+                    </div>
+                </div>
 
-        {/* Sortable List */}
-        <div ref={setNodeRef} className="space-y-3 min-h-[200px] pb-20">
-          <SortableContext 
-            items={activeDay?.places.map(p => p.id) || []} 
-            strategy={verticalListSortingStrategy}
-          >
-            {activeDay?.places.map((place, index) => (
-              <PlaceCard
-                key={place.id}
-                index={place.type !== 'flight' ? getPlaceIndex(place.id) : undefined}
-                place={place}
-                onDelete={(id) => onDeletePlace(activeDayId, id)}
-                onClick={() => onPlaceClick(place)}
-                onEdit={() => openEditModal(place)}
-                isDraggable={isEditMode}
-              />
-            ))}
-            {activeDay?.places.length === 0 && (
-              <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
-                <MapPin className="mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Plan your day here</p>
-              </div>
-            )}
-          </SortableContext>
-        </div>
+                {/* Standard Place Search */}
+                <form onSubmit={handleSearch} className="mb-6 relative">
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Find activity, hotel, or place..."
+                            className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 outline-none transition-all text-sm shadow-sm bg-white text-gray-900"
+                        />
+                        <Search className="absolute left-3 top-3 text-slate-400" size={14} />
+                        <button 
+                            type="submit"
+                            disabled={isSearching || !searchQuery}
+                            className="absolute right-2 top-2 p-1 bg-brand-50 text-brand-600 rounded hover:bg-brand-100 disabled:opacity-50 transition-colors"
+                        >
+                            {isSearching ? <Loader2 className="animate-spin" size={14} /> : <Plus size={14} />}
+                        </button>
+                    </div>
+                    
+                    {searchResults.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden">
+                            <div className="p-2 bg-slate-50 text-xs font-semibold text-slate-500 border-b flex justify-between">
+                                <span>Select a location</span>
+                                <button onClick={() => setSearchResults([])}><X size={12}/></button>
+                            </div>
+                            <ul className="max-h-60 overflow-y-auto">
+                                {searchResults.map((result, idx) => (
+                                    <li key={idx}>
+                                        <button 
+                                            onClick={() => addPlaceDirectly(result, 'activity')}
+                                            className="w-full text-left p-3 hover:bg-brand-50 transition-colors border-b border-slate-50 last:border-0"
+                                        >
+                                            <div className="font-medium text-slate-800 text-sm">{result.name}</div>
+                                            <div className="text-xs text-slate-500 truncate">{result.address}</div>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </form>
+
+                {/* Sortable List */}
+                <div ref={setNodeRef} className="space-y-3 min-h-[200px] pb-20">
+                <SortableContext 
+                    items={activeDay?.places.map(p => p.id) || []} 
+                    strategy={verticalListSortingStrategy}
+                >
+                    {activeDay?.places.map((place, index) => (
+                    <div key={place.id} className="relative">
+                        <PlaceCard
+                            index={place.type !== 'flight' ? getPlaceIndex(place.id) : undefined}
+                            place={place}
+                            onDelete={(id) => onDeletePlace(activeDayId, id)}
+                            onClick={() => onPlaceClick(place)}
+                            onEdit={() => openEditModal(place)}
+                            onFindStopover={() => handleFindStopover(place)}
+                            isDraggable={isEditMode}
+                        />
+                         {/* Requirement 2: Loading Indicator for Stopover */}
+                         {isFindingStopover === place.id && (
+                             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-2">
+                                 <Loader2 size={12} className="animate-spin" /> Finding stops...
+                             </div>
+                         )}
+                    </div>
+                    ))}
+                    {activeDay?.places.length === 0 && (
+                    <div className="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
+                        <MapPin className="mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">Plan your day here</p>
+                    </div>
+                    )}
+                </SortableContext>
+                </div>
+            </>
+        )}
       </div>
 
       {/* Place Edit Modal */}
@@ -424,9 +541,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
                 <div className="flex justify-between items-center mb-4 border-b pb-3">
-                    <h3 className="font-bold text-gray-800">
-                        Edit Details
-                    </h3>
+                    <h3 className="font-bold text-gray-800">Edit Details</h3>
                     <button onClick={() => setPlaceModal({...placeModal, isOpen: false})}><X size={18} className="text-gray-400" /></button>
                 </div>
                 <form onSubmit={handleModalSubmit} className="space-y-3">
@@ -465,6 +580,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                     </div>
 
+                     <div className="grid grid-cols-2 gap-3">
+                        <div>
+                             <label className="block text-xs font-semibold text-gray-500 mb-1">Currency</label>
+                             <input 
+                                type="text" 
+                                placeholder="TWD"
+                                className="w-full text-sm p-2 border rounded-lg focus:ring-2 focus:ring-brand-100 outline-none bg-white text-gray-900"
+                                value={placeModal.data.expenses?.currency || 'TWD'}
+                                onChange={e => setPlaceModal(prev => ({
+                                    ...prev, 
+                                    data: {
+                                        ...prev.data, 
+                                        expenses: { amount: prev.data.expenses?.amount || 0, currency: e.target.value }
+                                    }
+                                }))}
+                             />
+                        </div>
+                        <div>
+                             <label className="block text-xs font-semibold text-gray-500 mb-1">Cost</label>
+                             <input 
+                                type="number"
+                                placeholder="0" 
+                                className="w-full text-sm p-2 border rounded-lg focus:ring-2 focus:ring-brand-100 outline-none bg-white text-gray-900"
+                                value={placeModal.data.expenses?.amount || ''}
+                                onChange={e => setPlaceModal(prev => ({
+                                    ...prev, 
+                                    data: {
+                                        ...prev.data, 
+                                        expenses: { currency: prev.data.expenses?.currency || 'TWD', amount: parseFloat(e.target.value) }
+                                    }
+                                }))}
+                             />
+                        </div>
+                    </div>
+
                     <div>
                         <label className="block text-xs font-semibold text-gray-500 mb-1">Remarks</label>
                         <textarea 
@@ -481,6 +631,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </form>
             </div>
         </div>
+      )}
+
+      {/* Manage Days Modal */}
+      {showManageDays && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+             <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl">
+                <div className="flex justify-between items-center mb-4 border-b pb-3">
+                    <h3 className="text-lg font-bold text-slate-800">Manage Days</h3>
+                    <button onClick={() => setShowManageDays(false)}><X size={18} className="text-gray-400" /></button>
+                </div>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {days.map((day, idx) => (
+                        <div key={day.dayId} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
+                             {/* Requirement 5: Fix Font Color */}
+                             <span className="font-medium text-sm text-slate-800">Day {idx + 1}: {day.date}</span>
+                             <div className="flex gap-1">
+                                 <button 
+                                    disabled={idx === 0}
+                                    onClick={() => onMoveDay(idx, idx - 1)}
+                                    className="p-1 text-slate-400 hover:text-brand-600 disabled:opacity-30"
+                                 >
+                                     <ArrowUpDown size={16} />
+                                 </button>
+                             </div>
+                        </div>
+                    ))}
+                </div>
+             </div>
+           </div>
       )}
 
        {/* AI Planner Modal */}
@@ -576,5 +755,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
     </div>
+    </>
   );
 };

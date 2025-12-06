@@ -24,7 +24,7 @@ import { Dashboard } from './components/Dashboard';
 import { DayItinerary, Place, TripInfo, Trip } from './types';
 import { Map as MapIcon, List, Calendar, MapPin, ArrowRight, Plane, ArrowLeft, Loader2, FileText, Sparkles } from 'lucide-react';
 import { createTrip, fetchTrips, updateTripItinerary, deleteTrip, isSupabaseConfigured, updateTripTitle, uploadTripCover } from './services/supabaseClient';
-import { optimizeItineraryWithAI, parseItineraryFromText } from './services/geminiService';
+import { optimizeItineraryWithAI, parseItineraryFromText, calculateTravelTimes } from './services/geminiService';
 
 const DEFAULT_CENTER: [number, number] = [25.0330, 121.5654]; // Taipei
 
@@ -128,6 +128,9 @@ export const App: React.FC = () => {
   // Global Loading for Optimization/AI
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Stopover Candidates
+  const [stopoverCandidates, setStopoverCandidates] = useState<Place[]>([]);
+
   // Supabase Connection Status
   const isConnected = isSupabaseConfigured();
 
@@ -154,6 +157,42 @@ export const App: React.FC = () => {
         return () => clearTimeout(timer);
     }
   }, [days, currentTripId, view]);
+
+  // Debounced Travel Time Calculation
+  useEffect(() => {
+      // Avoid calculating on initial empty or dashboard state
+      if (view !== 'planner' || days.length === 0) return;
+
+      const timer = setTimeout(async () => {
+          // Identify which day changed or just recalc all?
+          // For simplicity and correctness, let's recalc the active day if possible, or iterate all.
+          // Since API limits exist, let's only do it for the active day or if we detect a change.
+          // For this prototype, we'll try to recalculate the Active Day if it's not Overview
+          if (activeDayId && activeDayId !== 'overview') {
+              const dayIndex = days.findIndex(d => d.dayId === activeDayId);
+              if (dayIndex === -1) return;
+              
+              const day = days[dayIndex];
+              // Only calc if > 1 place and not already calced recently? 
+              // We'll just run it. The service handles basic cases.
+              if (day.places.length > 1) {
+                  const updatedPlaces = await calculateTravelTimes(day.places);
+                  // Only update if different to avoid infinite loop
+                  const isDifferent = JSON.stringify(updatedPlaces) !== JSON.stringify(day.places);
+                  if (isDifferent) {
+                    setDays(prev => {
+                        const newDays = [...prev];
+                        newDays[dayIndex] = { ...day, places: updatedPlaces };
+                        return newDays;
+                    });
+                  }
+              }
+          }
+      }, 2000); // 2 sec debounce after changes stop
+
+      return () => clearTimeout(timer);
+  }, [days, activeDayId, view]);
+
 
   // Sensors for DnD
   const sensors = useSensors(
@@ -362,6 +401,16 @@ export const App: React.FC = () => {
           return day;
       }));
   };
+
+  const handleMoveDay = (fromIndex: number, toIndex: number) => {
+      if (toIndex < 0 || toIndex >= days.length) return;
+      setDays(prev => {
+          const newDays = [...prev];
+          const [movedDay] = newDays.splice(fromIndex, 1);
+          newDays.splice(toIndex, 0, movedDay);
+          return newDays;
+      });
+  }
 
   // --- Optimization and Undo ---
   
@@ -620,7 +669,8 @@ export const App: React.FC = () => {
   }
 
   const activeDay = days.find((d) => d.dayId === activeDayId);
-  const placesForMap = activeDay ? activeDay.places : [];
+  const placesForMap = activeDayId === 'overview' ? days.flatMap(d => d.places) : (activeDay ? activeDay.places : []);
+  const allPlacesForOverview = activeDayId === 'overview' ? days.map((d, i) => ({ dayIndex: i, places: d.places })) : undefined;
 
   return (
     <DndContext
@@ -640,7 +690,7 @@ export const App: React.FC = () => {
 
       <div className="flex h-screen w-screen overflow-hidden bg-white">
         {/* Mobile View Toggle */}
-        <div className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex bg-white/90 backdrop-blur shadow-xl rounded-full p-1 border border-slate-200 gap-1">
+        <div className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex bg-white/90 backdrop-blur shadow-xl rounded-full p-1 border border-slate-200 gap-1 no-print">
            <button 
              className={`p-3 rounded-full transition-all ${mobileView === 'list' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100'}`}
              onClick={() => setMobileView('list')}
@@ -683,18 +733,23 @@ export const App: React.FC = () => {
                 setView('dashboard');
                 setMobileView('list');
             }}
+            onMoveDay={handleMoveDay}
+            onShowStopovers={(candidates) => setStopoverCandidates(candidates)} // Pass handler
           />
         </div>
         
         {/* Right Map */}
         <div className={`
-            flex-1 h-full relative z-0 bg-slate-100
+            flex-1 h-full relative z-0 bg-slate-100 map-container
             ${mobileView === 'list' ? 'hidden md:block' : 'block'}
         `}>
             <MapComponent 
                 places={placesForMap} 
                 center={mapCenter}
                 zoom={13}
+                allPlaces={allPlacesForOverview}
+                isOverview={activeDayId === 'overview'}
+                stopoverCandidates={stopoverCandidates} // Pass candidates
             />
         </div>
       </div>

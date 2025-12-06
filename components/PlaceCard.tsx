@@ -1,8 +1,9 @@
 
+
 import React from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Trash2, GripVertical, Plane, Hotel, Clock, Pencil } from 'lucide-react';
+import { Trash2, GripVertical, Plane, Hotel, Clock, Pencil, Car, MapPinPlus, Wallet } from 'lucide-react';
 import { Place } from '../types';
 
 interface PlaceCardProps {
@@ -11,6 +12,7 @@ interface PlaceCardProps {
   onDelete: (id: string) => void;
   onClick: () => void;
   onEdit: () => void;
+  onFindStopover: () => void;
   isOverlay?: boolean;
   isDraggable?: boolean;
 }
@@ -21,6 +23,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
   onDelete, 
   onClick, 
   onEdit, 
+  onFindStopover,
   isOverlay,
   isDraggable = false
 }) => {
@@ -63,79 +66,108 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`
-        group relative flex items-start gap-3 p-3 mb-3 
-        bg-white rounded-lg shadow-sm 
-        hover:shadow-md transition-all duration-200
-        border border-gray-100 ${getBorderColor()}
-        ${isOverlay ? 'shadow-xl scale-105 cursor-grabbing z-50 rotate-1' : ''}
-      `}
-    >
-      {/* Drag Handle - Only visible in Edit Mode */}
-      {isDraggable && (
-        <div 
-          {...attributes} 
-          {...listeners}
-          className="mt-1 text-gray-300 cursor-grab active:cursor-grabbing hover:text-brand-500 touch-none transition-colors"
-        >
-          <GripVertical size={16} />
+    <div className="relative">
+      {/* Travel Time Connector */}
+      {place.travelTime && (
+        <div className="flex items-center gap-2 pl-9 pb-2 -mt-1 text-xs text-slate-400 font-medium">
+            <div className="w-0.5 h-3 bg-slate-200"></div>
+            <Car size={10} />
+            <span>{place.travelTime}</span>
         </div>
       )}
 
-      {/* Icon */}
-      <div className="mt-1 flex-shrink-0">
-        {getIcon()}
-      </div>
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={`
+          group relative flex items-start gap-3 p-3 mb-2 
+          bg-white rounded-lg shadow-sm 
+          hover:shadow-md transition-all duration-200
+          border border-gray-100 ${getBorderColor()}
+          ${isOverlay ? 'shadow-xl scale-105 cursor-grabbing z-50 rotate-1' : ''}
+        `}
+      >
+        {/* Drag Handle - Only visible in Edit Mode */}
+        {isDraggable && (
+          <div 
+            {...attributes} 
+            {...listeners}
+            className="mt-1 text-gray-300 cursor-grab active:cursor-grabbing hover:text-brand-500 touch-none transition-colors"
+          >
+            <GripVertical size={16} />
+          </div>
+        )}
 
-      {/* Content */}
-      <div className="flex-1 cursor-pointer min-w-0" onClick={onClick}>
-        <div className="flex justify-between items-center gap-2">
-          <h4 className="font-semibold text-gray-800 text-sm leading-tight truncate">{place.name}</h4>
-          {place.time && (
-            <span className="flex items-center gap-1 text-[10px] font-medium bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 whitespace-nowrap">
-              <Clock size={10} /> {place.time}
-            </span>
+        {/* Icon */}
+        <div className="mt-1 flex-shrink-0">
+          {getIcon()}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 cursor-pointer min-w-0" onClick={onClick}>
+          <div className="flex justify-between items-center gap-2">
+            <h4 className="font-semibold text-gray-800 text-sm leading-tight truncate">{place.name}</h4>
+            {place.time && (
+              <span className="flex items-center gap-1 text-[10px] font-medium bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 whitespace-nowrap">
+                <Clock size={10} /> {place.time}
+              </span>
+            )}
+          </div>
+          
+          {place.address && (
+              <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 truncate">
+                  <span className="truncate">{place.address}</span>
+              </p>
+          )}
+
+          {place.remarks && (
+              <p className="text-xs text-gray-600 mt-1.5 line-clamp-2">
+              {place.remarks}
+              </p>
+          )}
+
+          {/* Expense Display */}
+          {place.expenses && (
+              <div className="flex items-center gap-1 mt-1.5 text-xs text-emerald-600 font-medium">
+                  <Wallet size={10} />
+                  {place.expenses.currency} {place.expenses.amount}
+              </div>
           )}
         </div>
-        
-        {place.address && (
-            <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 truncate">
-                <span className="truncate">{place.address}</span>
-            </p>
-        )}
 
-        {place.remarks && (
-            <p className="text-xs text-gray-600 mt-1.5 line-clamp-2">
-            {place.remarks}
-            </p>
-        )}
-      </div>
-
-      {/* Actions - Always Visible */}
-      <div className="flex flex-col items-center gap-1 pl-1 border-l border-gray-50 ml-1">
-        <button
-            onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-            }}
-            className="text-gray-400 hover:text-blue-500 transition-colors p-1.5 hover:bg-blue-50 rounded"
-            title="Edit"
-        >
-            <Pencil size={14} />
-        </button>
-        <button
-            onClick={(e) => {
-                e.stopPropagation();
-                onDelete(place.id);
-            }}
-            className="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-red-50 rounded"
-            title="Delete"
-        >
-            <Trash2 size={14} />
-        </button>
+        {/* Actions - Always Visible */}
+        <div className="flex flex-col items-center gap-1 pl-1 border-l border-gray-50 ml-1">
+          <button
+              onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit();
+              }}
+              className="text-gray-400 hover:text-blue-500 transition-colors p-1.5 hover:bg-blue-50 rounded"
+              title="Edit"
+          >
+              <Pencil size={14} />
+          </button>
+          <button
+              onClick={(e) => {
+                  e.stopPropagation();
+                  onFindStopover();
+              }}
+              className="text-gray-400 hover:text-amber-500 transition-colors p-1.5 hover:bg-amber-50 rounded"
+              title="Find Stopover After"
+          >
+              <MapPinPlus size={14} />
+          </button>
+          <button
+              onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(place.id);
+              }}
+              className="text-gray-400 hover:text-red-500 transition-colors p-1.5 hover:bg-red-50 rounded"
+              title="Delete"
+          >
+              <Trash2 size={14} />
+          </button>
+        </div>
       </div>
     </div>
   );

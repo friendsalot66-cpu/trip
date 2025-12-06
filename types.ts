@@ -1,6 +1,6 @@
 
 
-export type PlaceType = 'activity' | 'flight' | 'hotel';
+export type PlaceType = 'activity' | 'flight' | 'hotel' | 'stopover';
 
 export interface Place {
   id: string;
@@ -11,6 +11,13 @@ export interface Place {
   address?: string;
   type: PlaceType;
   time?: string; // e.g., "14:00" or "Check-in"
+  
+  // New fields
+  travelTime?: string; // Time to reach this place from the previous one
+  expenses?: {
+    amount: number;
+    currency: string;
+  };
 }
 
 export interface DayItinerary {

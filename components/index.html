@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -61,7 +62,6 @@
       }
       .marker-pin.is-flight { background: #8b5cf6; }
       .marker-pin.is-hotel { background: #f59e0b; }
-      .marker-pin.is-stopover { background: #10b981; }
       
       .marker-number {
         position: absolute;
@@ -73,40 +73,6 @@
         font-size: 12px;
         color: #333;
         z-index: 10;
-      }
-
-      /* Print Styles for PDF Export */
-      @media print {
-        body {
-          background: white;
-        }
-        /* Hide UI elements */
-        button, input, textarea, .leaflet-control, .sidebar-header, .tabs-container, .map-container, .no-print {
-          display: none !important;
-        }
-        /* Hide the main layout containers */
-        .h-screen, .w-screen, .flex, .fixed {
-            height: auto !important;
-            width: 100% !important;
-            position: static !important;
-            overflow: visible !important;
-            display: block !important;
-        }
-        
-        /* Specific overrides for the printable area */
-        .print-only {
-            display: block !important;
-        }
-        
-        /* Ensure text is black */
-        * {
-            color: black !important;
-            box-shadow: none !important;
-        }
-      }
-
-      .print-only {
-          display: none;
       }
     </style>
   <script type="importmap">
