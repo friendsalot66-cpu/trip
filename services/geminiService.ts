@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Place, DayItinerary, PlaceType } from "../types";
 
 // Initialize Gemini AI Client
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.API_KEY });
 
 const MODEL_NAME = 'gemini-2.5-flash';
 
