@@ -1,6 +1,6 @@
 
 import { createClient } from '@supabase/supabase-js';
-import { Trip, DayItinerary } from '../types';
+import { Trip, DayItinerary } from '@/types';
 
 // Supabase configuration
 const supabaseUrl: string = 'https://fmazlncxcmsredrxygha.supabase.co';

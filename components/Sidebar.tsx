@@ -4,7 +4,7 @@ import { useDroppable } from '@dnd-kit/core';
 import { Plus, Map as MapIcon, Sparkles, Search, Loader2, Plane, X, Pencil, Cloud, CheckCircle, RotateCcw, Wand2, ArrowUpDown, MapPin, ArrowLeft, MoreHorizontal, FileDown, CalendarDays, ArrowRight, Printer, Wallet } from 'lucide-react';
 import { DayItinerary, Place, PlaceType } from '../types';
 import { PlaceCard } from './PlaceCard';
-import { findPlacesWithAI, generateItineraryWithAI, getStopoverRecommendations, generateMarkdown } from '../services/geminiService';
+import { findPlacesWithAI, generateItineraryWithAI, getStopoverRecommendations, generateMarkdown } from '../services/aiService';
 
 interface SidebarProps {
   days: DayItinerary[];
@@ -675,7 +675,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             
             <p className="text-sm text-gray-600 mb-4">
-              Use Gemini Thinking Mode to generate a complete itinerary.
+              Use AI Thinking Mode to generate a complete itinerary.
             </p>
 
             <textarea
