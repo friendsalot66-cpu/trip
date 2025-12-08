@@ -1,29 +1,14 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Place, DayItinerary, PlaceType } from "../types";
 
-// Helper to safely get the API key in both Vite (Browser) and Node environments
-const getApiKey = () => {
-  // 1. Try Vite/Browser standard
-  // @ts-ignore - import.meta is available in Vite
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
-    // @ts-ignore
-    return import.meta.env.VITE_API_KEY;
-  }
-  // 2. Try Node/Process standard (safe access to avoid ReferenceError in browser)
-  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-    return process.env.API_KEY;
-  }
-  return '';
+// Local definition of Type enum to avoid importing the SDK in the client
+// This matches the strings expected by the backend SDK
+const Type = {
+  OBJECT: 'OBJECT',
+  ARRAY: 'ARRAY',
+  STRING: 'STRING',
+  NUMBER: 'NUMBER',
+  BOOLEAN: 'BOOLEAN'
 };
-
-const apiKey = getApiKey();
-
-if (!apiKey) {
-    console.warn("Gemini API Key is missing. AI features will not work. Please set VITE_API_KEY in your Vercel environment variables.");
-}
-
-// Initialize Gemini AI Client
-const ai = new GoogleGenAI({ apiKey: apiKey });
 
 const MODEL_NAME = 'gemini-2.5-flash';
 
@@ -32,6 +17,36 @@ const cleanJson = (text: string) => {
   if (!text) return "{}";
   // Remove markdown code blocks
   return text.replace(/```json\s*|\s*```/g, "").trim();
+};
+
+/**
+ * Generic Helper to call the Vercel Serverless Function
+ */
+const callGeminiBackend = async (contents: string, config: any) => {
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: MODEL_NAME,
+        contents,
+        config
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.details || errorData.error || 'API Request Failed');
+    }
+
+    const data = await response.json();
+    return data.text;
+  } catch (error) {
+    console.error("Backend API Call Error:", error);
+    throw error;
+  }
 };
 
 /**
@@ -49,34 +64,30 @@ export const findPlacesWithAI = async (query: string, currentCenter?: { lat: num
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            candidates: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  lat: { type: Type.NUMBER },
-                  lng: { type: Type.NUMBER },
-                  address: { type: Type.STRING },
-                  remarks: { type: Type.STRING },
-                },
-                required: ['name', 'lat', 'lng'],
+    const text = await callGeminiBackend(prompt, {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          candidates: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                lat: { type: Type.NUMBER },
+                lng: { type: Type.NUMBER },
+                address: { type: Type.STRING },
+                remarks: { type: Type.STRING },
               },
+              required: ['name', 'lat', 'lng'],
             },
           },
         },
       },
     });
 
-    const json = JSON.parse(cleanJson(response.text || "{}"));
+    const json = JSON.parse(cleanJson(text || "{}"));
     return json.candidates || [];
   } catch (error) {
     console.error("Gemini Search Error:", error);
@@ -99,42 +110,38 @@ export const generateItineraryWithAI = async (prompt: string, daysCount: number)
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              dayId: { type: Type.STRING },
-              title: { type: Type.STRING },
-              places: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER },
-                    remarks: { type: Type.STRING },
-                    address: { type: Type.STRING },
-                    type: { type: Type.STRING, description: "One of 'activity', 'flight', 'hotel'" },
-                    time: { type: Type.STRING },
-                  },
-                  required: ['name', 'lat', 'lng', 'type'],
+    const text = await callGeminiBackend(userPrompt, {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            dayId: { type: Type.STRING },
+            title: { type: Type.STRING },
+            places: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER },
+                  remarks: { type: Type.STRING },
+                  address: { type: Type.STRING },
+                  type: { type: Type.STRING, description: "One of 'activity', 'flight', 'hotel'" },
+                  time: { type: Type.STRING },
                 },
+                required: ['name', 'lat', 'lng', 'type'],
               },
             },
-            required: ['dayId', 'title', 'places'],
           },
+          required: ['dayId', 'title', 'places'],
         },
       },
     });
 
-    const rawData = JSON.parse(cleanJson(response.text || "[]"));
+    const rawData = JSON.parse(cleanJson(text || "[]"));
 
     // Post-process to ensure IDs exist
     return rawData.map((day: any, index: number) => ({
@@ -187,42 +194,38 @@ export const optimizeItineraryWithAI = async (
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              dayId: { type: Type.STRING },
-              title: { type: Type.STRING },
-              date: { type: Type.STRING },
-              places: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    name: { type: Type.STRING },
-                    lat: { type: Type.NUMBER },
-                    lng: { type: Type.NUMBER },
-                    remarks: { type: Type.STRING },
-                    type: { type: Type.STRING },
-                    time: { type: Type.STRING },
-                  },
-                  required: ['name', 'lat', 'lng'],
+    const text = await callGeminiBackend(userPrompt, {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            dayId: { type: Type.STRING },
+            title: { type: Type.STRING },
+            date: { type: Type.STRING },
+            places: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER },
+                  remarks: { type: Type.STRING },
+                  type: { type: Type.STRING },
+                  time: { type: Type.STRING },
                 },
+                required: ['name', 'lat', 'lng'],
               },
             },
-            required: ['dayId', 'places'],
           },
+          required: ['dayId', 'places'],
         },
       },
     });
 
-    const optimized = JSON.parse(cleanJson(response.text || "[]"));
+    const optimized = JSON.parse(cleanJson(text || "[]"));
     
     // We re-add IDs just in case they were stripped to save context window
     return optimized.map((day: any) => ({
@@ -257,51 +260,47 @@ export const parseItineraryFromText = async (text: string): Promise<{ destinatio
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: MODEL_NAME,
-      contents: userPrompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            destination: { type: Type.STRING },
-            startDate: { type: Type.STRING, description: "YYYY-MM-DD" },
-            endDate: { type: Type.STRING, description: "YYYY-MM-DD" },
-            days: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  dayId: { type: Type.STRING },
-                  title: { type: Type.STRING },
-                  date: { type: Type.STRING, description: "YYYY-MM-DD" },
-                  places: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        name: { type: Type.STRING },
-                        lat: { type: Type.NUMBER },
-                        lng: { type: Type.NUMBER },
-                        remarks: { type: Type.STRING },
-                        type: { type: Type.STRING, description: "One of 'activity', 'hotel', 'flight'" },
-                        time: { type: Type.STRING },
-                      },
-                      required: ['name', 'lat', 'lng'],
+    const responseText = await callGeminiBackend(userPrompt, {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          destination: { type: Type.STRING },
+          startDate: { type: Type.STRING, description: "YYYY-MM-DD" },
+          endDate: { type: Type.STRING, description: "YYYY-MM-DD" },
+          days: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                dayId: { type: Type.STRING },
+                title: { type: Type.STRING },
+                date: { type: Type.STRING, description: "YYYY-MM-DD" },
+                places: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      lat: { type: Type.NUMBER },
+                      lng: { type: Type.NUMBER },
+                      remarks: { type: Type.STRING },
+                      type: { type: Type.STRING, description: "One of 'activity', 'hotel', 'flight'" },
+                      time: { type: Type.STRING },
                     },
+                    required: ['name', 'lat', 'lng'],
                   },
                 },
-                required: ['dayId', 'places'],
               },
+              required: ['dayId', 'places'],
             },
           },
-          required: ['destination', 'startDate', 'endDate', 'days'],
         },
+        required: ['destination', 'startDate', 'endDate', 'days'],
       },
     });
 
-    const parsed = JSON.parse(cleanJson(response.text || "{}"));
+    const parsed = JSON.parse(cleanJson(responseText || "{}"));
     
     // Add IDs
     if (parsed.days) {
@@ -324,8 +323,7 @@ export const parseItineraryFromText = async (text: string): Promise<{ destinatio
 };
 
 /**
- * NEW: Calculate Travel Times
- * Estimates driving time between a sequence of places.
+ * Calculate Travel Times
  */
 export const calculateTravelTimes = async (places: Place[]): Promise<Place[]> => {
   if (places.length < 2) return places;
@@ -344,24 +342,20 @@ export const calculateTravelTimes = async (places: Place[]): Promise<Place[]> =>
   `;
 
   try {
-     const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: prompt,
-        config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                    times: {
-                        type: Type.ARRAY,
-                        items: { type: Type.STRING, nullable: true }
-                    }
+     const text = await callGeminiBackend(prompt, {
+        responseMimeType: 'application/json',
+        responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+                times: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING, nullable: true }
                 }
             }
         }
      });
 
-     const json = JSON.parse(cleanJson(response.text || "{}"));
+     const json = JSON.parse(cleanJson(text || "{}"));
      const times = json.times || [];
 
      return places.map((p, i) => ({
@@ -376,7 +370,7 @@ export const calculateTravelTimes = async (places: Place[]): Promise<Place[]> =>
 };
 
 /**
- * NEW: Get Stopover Recommendations
+ * Get Stopover Recommendations
  */
 export const getStopoverRecommendations = async (from: Place, to: Place): Promise<Partial<Place>[]> => {
     const prompt = `
@@ -387,33 +381,29 @@ export const getStopoverRecommendations = async (from: Place, to: Place): Promis
     `;
 
     try {
-        const response = await ai.models.generateContent({
-            model: MODEL_NAME,
-            contents: prompt,
-            config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        candidates: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    name: { type: Type.STRING },
-                                    lat: { type: Type.NUMBER },
-                                    lng: { type: Type.NUMBER },
-                                    address: { type: Type.STRING },
-                                    remarks: { type: Type.STRING },
-                                },
-                                required: ['name', 'lat', 'lng']
-                            }
+        const text = await callGeminiBackend(prompt, {
+            responseMimeType: 'application/json',
+            responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                    candidates: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                name: { type: Type.STRING },
+                                lat: { type: Type.NUMBER },
+                                lng: { type: Type.NUMBER },
+                                address: { type: Type.STRING },
+                                remarks: { type: Type.STRING },
+                            },
+                            required: ['name', 'lat', 'lng']
                         }
                     }
                 }
             }
         });
-        const json = JSON.parse(cleanJson(response.text || "{}"));
+        const json = JSON.parse(cleanJson(text || "{}"));
         return json.candidates || [];
     } catch (e) {
         console.error("Stopover Error:", e);
@@ -422,7 +412,7 @@ export const getStopoverRecommendations = async (from: Place, to: Place): Promis
 }
 
 /**
- * NEW: Generate Markdown Export
+ * Generate Markdown Export (Client-side logic only, no backend needed)
  */
 export const generateMarkdown = (tripTitle: string, days: DayItinerary[]): string => {
     let md = `# ${tripTitle}\n\n`;
