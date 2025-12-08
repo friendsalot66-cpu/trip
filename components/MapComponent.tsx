@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import { Place } from '../types';
-import { Youtube, ExternalLink } from 'lucide-react';
+import { Youtube, PlusCircle } from 'lucide-react';
 
 // Function to create a numbered custom icon
 const createNumberedIcon = (number: number | undefined, type: string, colorClass: string = '') => {
@@ -35,7 +35,8 @@ interface MapComponentProps {
   zoom: number;
   allPlaces?: { dayIndex: number, places: Place[] }[]; // For Overview Mode
   isOverview?: boolean;
-  stopoverCandidates?: Place[]; // New Prop
+  stopoverCandidates?: Place[];
+  onAddPlace?: (place: Place) => void; // New prop for adding from map
 }
 
 // Component to handle map resizing, flyTo, and auto-zoom bounds
@@ -56,7 +57,7 @@ const MapController: React.FC<{
     return () => resizeObserver.disconnect();
   }, [map]);
 
-  // 2. Auto-Fit Bounds when places change (Requirement 3)
+  // 2. Auto-Fit Bounds when places change
   useEffect(() => {
       if (places && places.length > 0) {
           // Filter out flights for zooming as they can be very far
@@ -67,13 +68,14 @@ const MapController: React.FC<{
           if (locations.length > 0) {
               const bounds = L.latLngBounds(locations);
               // Add a little padding
-              map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 1.0 });
+              map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 0.5 });
               return;
           }
       }
       
       // Fallback to center/zoom if no places or forced center
-      map.flyTo(center, zoom, { duration: 1.2, easeLinearity: 0.25 });
+      // Speed enhancement: Reduced duration from 1.2 to 0.5 for snappier feel
+      map.flyTo(center, zoom, { duration: 0.5, easeLinearity: 0.25 });
   }, [places, center, zoom, map]);
 
   // 3. Explicit Bounds (Overview Mode)
@@ -89,7 +91,7 @@ const MapController: React.FC<{
 // Distinct colors for days in Overview mode
 const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
 
-export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom, allPlaces, isOverview, stopoverCandidates }) => {
+export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom, allPlaces, isOverview, stopoverCandidates, onAddPlace }) => {
   
   let mapContent;
   let mapBounds: L.LatLngBounds | undefined;
@@ -169,7 +171,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
                 </Marker>
             ))}
 
-            {/* Requirement 1: Stopover Candidates (Green Pins) */}
+            {/* Stopover Candidates (Green Pins) */}
             {stopoverCandidates && stopoverCandidates.map((place, idx) => (
                 <Marker
                     key={`stopover-${idx}`}
@@ -178,7 +180,6 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
                 >
                     <Popup className="custom-popup">
                         <div className="p-0 min-w-[200px] overflow-hidden rounded-lg">
-                            {/* Placeholder Image */}
                             <div className="h-24 w-full bg-gray-200 relative overflow-hidden">
                                 <img 
                                     src={`https://placehold.co/400x200/10b981/ffffff?text=${encodeURIComponent(place.name)}`}
@@ -194,14 +195,24 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
                                 <p className="text-xs text-gray-500 mb-2">{place.address}</p>
                                 <p className="text-xs text-gray-600 mb-3">{place.remarks}</p>
                                 
-                                <a 
-                                    href={`https://www.youtube.com/results?search_query=${encodeURIComponent(place.name + " travel guide")}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded transition-colors"
-                                >
-                                    <Youtube size={14} /> Watch on YouTube
-                                </a>
+                                <div className="flex flex-col gap-2">
+                                    {onAddPlace && (
+                                        <button
+                                            onClick={() => onAddPlace({ ...place, id: crypto.randomUUID() })}
+                                            className="w-full flex items-center justify-center gap-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 py-2 rounded transition-colors shadow-sm"
+                                        >
+                                            <PlusCircle size={14} /> Add to Itinerary
+                                        </button>
+                                    )}
+                                    <a 
+                                        href={`https://www.youtube.com/results?search_query=${encodeURIComponent(place.name + " travel guide")}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center justify-center gap-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 py-2 rounded transition-colors"
+                                    >
+                                        <Youtube size={14} /> Watch on YouTube
+                                    </a>
+                                </div>
                             </div>
                         </div>
                     </Popup>
@@ -218,7 +229,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
       style={{ height: "100%", width: "100%", zIndex: 0 }}
       zoomControl={false}
       scrollWheelZoom={true}
-      className="map-container" // For print hiding
+      className="map-container"
     >
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

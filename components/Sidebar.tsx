@@ -27,7 +27,6 @@ interface SidebarProps {
   onUpdateDayTitle: (dayId: string, newTitle: string) => void;
   onBack: () => void;
   onMoveDay: (fromIndex: number, toIndex: number) => void;
-  // New props
   onShowStopovers: (candidates: Place[]) => void;
 }
 
@@ -77,7 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [showExportMenu, setShowExportMenu] = useState(false);
   
   // Stopover Loading State
-  const [isFindingStopover, setIsFindingStopover] = useState<string | null>(null); // holds place ID
+  const [isFindingStopover, setIsFindingStopover] = useState<string | null>(null);
 
   const [placeModal, setPlaceModal] = useState<{
     isOpen: boolean;
@@ -153,7 +152,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         time: partialPlace.time
     };
     onAddPlace(newPlace);
-    // Clear stopovers from map when adding a new place to avoid clutter
     onShowStopovers([]);
   };
 
@@ -209,8 +207,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     
     setIsFindingStopover(place.id);
     try {
-        // Requirement 2: Loading Status (handled by state)
-        // Requirement 1: Show on map (handled by onShowStopovers)
         const recommendations = await getStopoverRecommendations(place, nextPlace);
         if (recommendations.length > 0) {
             const mappedRecommendations = recommendations.map(r => ({
@@ -220,7 +216,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 lng: r.lng || 0,
                 remarks: r.remarks || '',
                 address: r.address,
-                type: 'activity' as PlaceType
+                type: 'stopover' as PlaceType // Ensure type is stopover for marker
             }));
             onShowStopovers(mappedRecommendations);
         } else {
@@ -251,8 +247,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           a.download = `${tripTitle || 'trip'}.md`;
           a.click();
       } else {
-          // Requirement 4: Export PDF / Print Function
-          // The CSS @media print handles the visibility of the .print-only section
           window.print();
       }
       setShowExportMenu(false);
@@ -269,7 +263,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-    {/* Hidden Print-Only View (Requirement 4) */}
     <div className="print-only p-10 bg-white">
         <h1 className="text-3xl font-bold mb-4">{tripTitle}</h1>
         {days.map((day, idx) => (
@@ -339,7 +332,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                </button>
              )}
              
-             {/* Export Menu Trigger */}
              <div className="relative">
                  <button onClick={() => setShowExportMenu(!showExportMenu)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors">
                     <MoreHorizontal size={16} />
@@ -361,9 +353,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
            </div>
         </div>
         
-        {/* Day Tabs */}
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide tabs-container">
-            {/* Overview Tab */}
             <button
                 onClick={() => setActiveDayId('overview')}
                 className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-all text-left min-w-[80px]
@@ -403,18 +393,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-4 relative">
         {isOverview ? (
-             <div className="text-center py-10">
-                <h2 className="text-xl font-bold text-slate-800 mb-2">Trip Overview</h2>
-                <p className="text-sm text-slate-500 mb-6">Showing all locations on the map.</p>
-                <div className="space-y-4 max-w-sm mx-auto text-left">
-                    {days.map((day, idx) => (
-                        <div key={day.dayId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-200 hover:shadow-md transition-all" onClick={() => setActiveDayId(day.dayId)}>
-                             <h4 className="font-bold text-slate-800">Day {idx+1}: {day.title}</h4>
-                             <p className="text-xs text-slate-500 mt-1">{day.places.length} places • {day.date}</p>
-                        </div>
-                    ))}
+             <div className="h-full overflow-y-auto">
+                <div className="text-center py-6">
+                    <h2 className="text-xl font-bold text-slate-800 mb-2">Trip Overview</h2>
+                    <p className="text-sm text-slate-500 mb-6">Showing all locations on the map.</p>
+                    <div className="space-y-4 max-w-sm mx-auto text-left">
+                        {days.map((day, idx) => (
+                            <div key={day.dayId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-200 hover:shadow-md transition-all" onClick={() => setActiveDayId(day.dayId)}>
+                                <h4 className="font-bold text-slate-800">Day {idx+1}: {day.title}</h4>
+                                <p className="text-xs text-slate-500 mt-1">{day.places.length} places • {day.date}</p>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-            </div>
+             </div>
         ) : (
             <>
                 <div className="flex items-center justify-between mb-4">
@@ -457,7 +449,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 {/* Standard Place Search */}
-                <form onSubmit={handleSearch} className="mb-6 relative">
+                <form onSubmit={handleSearch} className="mb-6 relative z-30">
                     <div className="relative">
                         <input
                             type="text"
@@ -477,20 +469,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                     
                     {searchResults.length > 0 && (
-                        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden">
-                            <div className="p-2 bg-slate-50 text-xs font-semibold text-slate-500 border-b flex justify-between">
+                        <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-slate-100 z-50 overflow-hidden max-h-[300px] overflow-y-auto">
+                            <div className="p-3 bg-slate-50 text-xs font-semibold text-slate-500 border-b flex justify-between sticky top-0">
                                 <span>Select a location</span>
                                 <button onClick={() => setSearchResults([])}><X size={12}/></button>
                             </div>
-                            <ul className="max-h-60 overflow-y-auto">
+                            <ul>
                                 {searchResults.map((result, idx) => (
                                     <li key={idx}>
                                         <button 
                                             onClick={() => addPlaceDirectly(result, 'activity')}
-                                            className="w-full text-left p-3 hover:bg-brand-50 transition-colors border-b border-slate-50 last:border-0"
+                                            className="w-full text-left p-4 hover:bg-brand-50 transition-colors border-b border-slate-50 last:border-0"
                                         >
                                             <div className="font-medium text-slate-800 text-sm">{result.name}</div>
-                                            <div className="text-xs text-slate-500 truncate">{result.address}</div>
+                                            <div className="text-xs text-slate-500 truncate mt-0.5">{result.address}</div>
                                         </button>
                                     </li>
                                 ))}
@@ -499,7 +491,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     )}
                 </form>
 
-                {/* Sortable List */}
                 <div ref={setNodeRef} className="space-y-3 min-h-[200px] pb-20">
                 <SortableContext 
                     items={activeDay?.places.map(p => p.id) || []} 
@@ -516,7 +507,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             onFindStopover={() => handleFindStopover(place)}
                             isDraggable={isEditMode}
                         />
-                         {/* Requirement 2: Loading Indicator for Stopover */}
                          {isFindingStopover === place.id && (
                              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-2">
                                  <Loader2 size={12} className="animate-spin" /> Finding stops...
@@ -536,7 +526,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Place Edit Modal */}
       {placeModal.isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
@@ -633,7 +622,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* Manage Days Modal */}
       {showManageDays && (
            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
              <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl">
@@ -644,7 +632,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="space-y-2 max-h-80 overflow-y-auto">
                     {days.map((day, idx) => (
                         <div key={day.dayId} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
-                             {/* Requirement 5: Fix Font Color */}
                              <span className="font-medium text-sm text-slate-800">Day {idx + 1}: {day.date}</span>
                              <div className="flex gap-1">
                                  <button 
@@ -662,7 +649,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
            </div>
       )}
 
-       {/* AI Planner Modal */}
       {showAIModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl">
@@ -703,7 +689,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      {/* AI Optimization Modal */}
       {showOptimizeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl w-full max-w-sm p-5 shadow-2xl">

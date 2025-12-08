@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import {
   DndContext,
@@ -164,20 +162,13 @@ export const App: React.FC = () => {
       if (view !== 'planner' || days.length === 0) return;
 
       const timer = setTimeout(async () => {
-          // Identify which day changed or just recalc all?
-          // For simplicity and correctness, let's recalc the active day if possible, or iterate all.
-          // Since API limits exist, let's only do it for the active day or if we detect a change.
-          // For this prototype, we'll try to recalculate the Active Day if it's not Overview
           if (activeDayId && activeDayId !== 'overview') {
               const dayIndex = days.findIndex(d => d.dayId === activeDayId);
               if (dayIndex === -1) return;
               
               const day = days[dayIndex];
-              // Only calc if > 1 place and not already calced recently? 
-              // We'll just run it. The service handles basic cases.
               if (day.places.length > 1) {
                   const updatedPlaces = await calculateTravelTimes(day.places);
-                  // Only update if different to avoid infinite loop
                   const isDifferent = JSON.stringify(updatedPlaces) !== JSON.stringify(day.places);
                   if (isDifferent) {
                     setDays(prev => {
@@ -340,9 +331,17 @@ export const App: React.FC = () => {
   };
 
   const handleAddPlace = (newPlace: Place) => {
+    // Determine which day to add to: Active Day or Default to First
+    let targetDayId = activeDayId;
+    if (activeDayId === 'overview' || !activeDayId) {
+        targetDayId = days[0]?.dayId;
+    }
+
+    if (!targetDayId) return;
+
     setDays((prevDays) => {
       return prevDays.map((day) => {
-        if (day.dayId === activeDayId) {
+        if (day.dayId === targetDayId) {
           return { ...day, places: [...day.places, newPlace] };
         }
         return day;
@@ -388,7 +387,6 @@ export const App: React.FC = () => {
       setTripTitle(newTitle);
       if (currentTripId) {
           await updateTripTitle(currentTripId, newTitle);
-          // Sync with dashboard list
           setTrips(prev => prev.map(t => t.id === currentTripId ? { ...t, title: newTitle } : t));
       }
   };
@@ -601,7 +599,6 @@ export const App: React.FC = () => {
                     </div>
                     </div>
                     
-                    {/* Demo Button inside Manual Form */}
                     <div className="pt-2">
                         <button 
                             type="button" 
@@ -643,7 +640,6 @@ export const App: React.FC = () => {
                         </p>
                     </div>
                     
-                    {/* Pre-fill button for Taipei */}
                     <button 
                         onClick={() => {
                             setImportText(`🇹🇼 台北4日3夜美食之旅\n\n✈️航班：12/18 CX564 08:30 HKG→10:15 TPE / 12/21 CX565 19:30 TPE→21:30 HKG\n🏨住宿：D1慕舍酒店(D1) / D2麗禧溫泉(D2) / D3-4路徒Plus主題館\n\n📅 Day1 12/18(四) 中山→華山→信義\n•10:15-12:00 軟食力行天宮店\n•12:15-13:00 慕舍酒店寄行李\n•13:30-15:30 華山1914文創\n... (Click Generate to see full parsing)`);
@@ -749,7 +745,8 @@ export const App: React.FC = () => {
                 zoom={13}
                 allPlaces={allPlacesForOverview}
                 isOverview={activeDayId === 'overview'}
-                stopoverCandidates={stopoverCandidates} // Pass candidates
+                stopoverCandidates={stopoverCandidates}
+                onAddPlace={handleAddPlace} // Pass add handler
             />
         </div>
       </div>
@@ -757,7 +754,6 @@ export const App: React.FC = () => {
       <DragOverlay>
         {activePlaceId ? (
           <div className="opacity-90 scale-105">
-             {/* Mock visual for dragging */}
              <div className="bg-white p-3 rounded shadow-xl border-l-4 border-brand-500 w-[350px]">
                 Moving item...
              </div>
