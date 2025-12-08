@@ -19,6 +19,8 @@ const cleanJson = (text: string) => {
   return text.replace(/```json\s*|\s*```/g, "").trim();
 };
 
+const isValidCoord = (num: any) => typeof num === 'number' && !isNaN(num);
+
 /**
  * Generic Helper to call the Vercel Serverless Function
  */
@@ -88,7 +90,9 @@ export const findPlacesWithAI = async (query: string, currentCenter?: { lat: num
     });
 
     const json = JSON.parse(cleanJson(text || "{}"));
-    return json.candidates || [];
+    const candidates = json.candidates || [];
+    // Filter out invalid coordinates
+    return candidates.filter((c: any) => isValidCoord(c.lat) && isValidCoord(c.lng));
   } catch (error) {
     console.error("Gemini Search Error:", error);
     return [];
@@ -143,15 +147,17 @@ export const generateItineraryWithAI = async (prompt: string, daysCount: number)
 
     const rawData = JSON.parse(cleanJson(text || "[]"));
 
-    // Post-process to ensure IDs exist
+    // Post-process to ensure IDs exist and coords valid
     return rawData.map((day: any, index: number) => ({
       ...day,
       dayId: day.dayId || `day-${index + 1}`,
-      places: day.places.map((p: any) => ({
-        ...p,
-        id: crypto.randomUUID(),
-        type: p.type || 'activity'
-      }))
+      places: day.places
+        .filter((p: any) => isValidCoord(p.lat) && isValidCoord(p.lng))
+        .map((p: any) => ({
+          ...p,
+          id: crypto.randomUUID(),
+          type: p.type || 'activity'
+        }))
     }));
   } catch (error) {
     console.error("Gemini Planning Error:", error);
@@ -230,11 +236,13 @@ export const optimizeItineraryWithAI = async (
     // We re-add IDs just in case they were stripped to save context window
     return optimized.map((day: any) => ({
         ...day,
-        places: day.places.map((p: any) => ({
-            ...p,
-            id: crypto.randomUUID(),
-            type: p.type as PlaceType || 'activity'
-        }))
+        places: day.places
+            .filter((p: any) => isValidCoord(p.lat) && isValidCoord(p.lng))
+            .map((p: any) => ({
+                ...p,
+                id: crypto.randomUUID(),
+                type: p.type as PlaceType || 'activity'
+            }))
     }));
   } catch (error) {
     console.error("Gemini Optimization Error:", error);
@@ -302,16 +310,18 @@ export const parseItineraryFromText = async (text: string): Promise<{ destinatio
 
     const parsed = JSON.parse(cleanJson(responseText || "{}"));
     
-    // Add IDs
+    // Add IDs and validate
     if (parsed.days) {
       parsed.days = parsed.days.map((day: any, idx: number) => ({
         ...day,
         dayId: day.dayId || `day-${idx + 1}`,
-        places: day.places.map((p: any) => ({
-          ...p,
-          id: crypto.randomUUID(),
-          type: p.type || 'activity'
-        }))
+        places: day.places
+          .filter((p: any) => isValidCoord(p.lat) && isValidCoord(p.lng))
+          .map((p: any) => ({
+            ...p,
+            id: crypto.randomUUID(),
+            type: p.type || 'activity'
+          }))
       }));
     }
 
@@ -374,10 +384,16 @@ export const calculateTravelTimes = async (places: Place[]): Promise<Place[]> =>
  */
 export const getStopoverRecommendations = async (from: Place, to: Place): Promise<Partial<Place>[]> => {
     const prompt = `
-        Task: Recommend 3 interesting stopover places between "${from.name}" and "${to.name}".
-        Context: Traveling from Lat ${from.lat}, Lng ${from.lng} to Lat ${to.lat}, Lng ${to.lng}.
+        Task: Find 3 stopover places between:
+        Start: ${from.name} (${from.lat}, ${from.lng})
+        End: ${to.name} (${to.lat}, ${to.lng})
         
-        Output: JSON Array of Place objects (name, lat, lng, address, remarks).
+        Strict Requirements:
+        1. Return exactly 3 candidates.
+        2. Latitude and Longitude MUST be numbers, not strings or null.
+        3. Do not return empty coordinates.
+        
+        Output Schema: JSON Array of objects with name, lat, lng, address.
     `;
 
     try {
@@ -404,7 +420,9 @@ export const getStopoverRecommendations = async (from: Place, to: Place): Promis
             }
         });
         const json = JSON.parse(cleanJson(text || "{}"));
-        return json.candidates || [];
+        const candidates = json.candidates || [];
+        // Strict filter
+        return candidates.filter((p: any) => isValidCoord(p.lat) && isValidCoord(p.lng));
     } catch (e) {
         console.error("Stopover Error:", e);
         return [];
@@ -412,7 +430,7 @@ export const getStopoverRecommendations = async (from: Place, to: Place): Promis
 }
 
 /**
- * Generate Markdown Export (Client-side logic only, no backend needed)
+ * Generate Markdown Export
  */
 export const generateMarkdown = (tripTitle: string, days: DayItinerary[]): string => {
     let md = `# ${tripTitle}\n\n`;

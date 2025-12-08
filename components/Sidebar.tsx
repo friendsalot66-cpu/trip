@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useDroppable } from '@dnd-kit/core';
@@ -85,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const activeDayIndex = days.findIndex(d => d.dayId === activeDayId);
   const activeDay = activeDayIndex >= 0 ? days[activeDayIndex] : null;
+  const isOverview = activeDayId === 'overview';
 
   useEffect(() => {
     setEditedTitle(tripTitle || '');
@@ -200,7 +202,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleFindStopover = async (place: Place) => {
     const currentIndex = activeDay?.places.findIndex(p => p.id === place.id) ?? -1;
     if (currentIndex === -1 || !activeDay || currentIndex === activeDay.places.length - 1) {
-        alert("Please select a place that is not the last one in the list to find a stopover.");
+        alert("Select a place (not the last one) to find stopovers between it and the next stop.");
         return;
     }
     const nextPlace = activeDay.places[currentIndex + 1];
@@ -216,11 +218,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 lng: r.lng || 0,
                 remarks: r.remarks || '',
                 address: r.address,
-                type: 'stopover' as PlaceType // Ensure type is stopover for marker
+                type: 'stopover' as PlaceType
             }));
             onShowStopovers(mappedRecommendations);
         } else {
-            alert("No recommendations found.");
+            alert("No stopovers found. Try a different segment.");
         }
     } catch (e) {
         console.error(e);
@@ -259,8 +261,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return index !== -1 ? index + 1 : undefined;
   };
 
-  const isOverview = activeDayId === 'overview';
-
   return (
     <>
     <div className="print-only p-10 bg-white">
@@ -287,7 +287,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     <div className="flex flex-col h-full bg-slate-50 border-r border-slate-200 print:hidden sidebar-container">
       {/* Header */}
-      <div className="p-4 bg-white border-b border-slate-200 sidebar-header">
+      <div className="p-4 bg-white border-b border-slate-200 sidebar-header flex-shrink-0">
         <div className="flex items-center justify-between mb-4">
           <div className="flex flex-1 min-w-0 mr-4 items-center gap-2">
             <button onClick={onBack} className="p-1.5 -ml-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-full transition-colors">
@@ -393,18 +393,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-4 relative">
         {isOverview ? (
-             <div className="h-full overflow-y-auto">
+             <div className="space-y-4">
                 <div className="text-center py-6">
                     <h2 className="text-xl font-bold text-slate-800 mb-2">Trip Overview</h2>
-                    <p className="text-sm text-slate-500 mb-6">Showing all locations on the map.</p>
-                    <div className="space-y-4 max-w-sm mx-auto text-left">
-                        {days.map((day, idx) => (
-                            <div key={day.dayId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-200 hover:shadow-md transition-all" onClick={() => setActiveDayId(day.dayId)}>
-                                <h4 className="font-bold text-slate-800">Day {idx+1}: {day.title}</h4>
-                                <p className="text-xs text-slate-500 mt-1">{day.places.length} places • {day.date}</p>
+                    <p className="text-sm text-slate-500 mb-6">Showing all {days.length} days on the map.</p>
+                </div>
+                <div className="space-y-3">
+                    {days.length === 0 ? (
+                        <div className="text-center text-slate-400 py-8">No days planned yet.</div>
+                    ) : (
+                        days.map((day, idx) => (
+                            <div key={day.dayId} 
+                                 className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm cursor-pointer hover:border-brand-200 hover:shadow-md transition-all flex justify-between items-center" 
+                                 onClick={() => setActiveDayId(day.dayId)}
+                            >
+                                <div>
+                                    <h4 className="font-bold text-slate-800">Day {idx+1}: {day.title}</h4>
+                                    <p className="text-xs text-slate-500 mt-1">{day.places.length} places • {day.date}</p>
+                                </div>
+                                <ArrowRight size={16} className="text-slate-300" />
                             </div>
-                        ))}
-                    </div>
+                        ))
+                    )}
                 </div>
              </div>
         ) : (

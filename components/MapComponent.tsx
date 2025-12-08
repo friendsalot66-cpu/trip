@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+
+import React, { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import { Place } from '../types';
@@ -36,7 +37,7 @@ interface MapComponentProps {
   allPlaces?: { dayIndex: number, places: Place[] }[]; // For Overview Mode
   isOverview?: boolean;
   stopoverCandidates?: Place[];
-  onAddPlace?: (place: Place) => void; // New prop for adding from map
+  onAddPlace?: (place: Place) => void;
 }
 
 // Component to handle map resizing, flyTo, and auto-zoom bounds
@@ -45,9 +46,13 @@ const MapController: React.FC<{
     zoom: number; 
     bounds?: L.LatLngBounds;
     places?: Place[];
-}> = ({ center, zoom, bounds, places }) => {
+    isOverview?: boolean;
+}> = ({ center, zoom, bounds, places, isOverview }) => {
   const map = useMap();
-  
+  const prevCenterRef = useRef<string>('');
+  const prevPlacesLenRef = useRef<number>(0);
+  const prevOverviewRef = useRef<boolean>(false);
+
   // 1. Resize Handler
   useEffect(() => {
     const resizeObserver = new ResizeObserver(() => {
@@ -57,33 +62,42 @@ const MapController: React.FC<{
     return () => resizeObserver.disconnect();
   }, [map]);
 
-  // 2. Auto-Fit Bounds when places change
+  // 2. Logic Controller
   useEffect(() => {
-      if (places && places.length > 0) {
-          // Filter out flights for zooming as they can be very far
+      const centerKey = `${center[0]},${center[1]}`;
+      const hasPlacesChanged = places && places.length !== prevPlacesLenRef.current;
+      const hasCenterChanged = centerKey !== prevCenterRef.current;
+      const isSwitchingToOverview = isOverview && !prevOverviewRef.current;
+      
+      // A. Priority: Overview Mode Bounds
+      if (isOverview && bounds && bounds.isValid()) {
+           map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 0.5 });
+      }
+      // B. Priority: Day Switch (Places array changed significantly)
+      else if (hasPlacesChanged && !isOverview && places && places.length > 0) {
           const locations = places
-            .filter(p => p.type !== 'flight')
+            .filter(p => p.type !== 'flight' && !isNaN(p.lat) && !isNaN(p.lng))
             .map(p => L.latLng(p.lat, p.lng));
           
           if (locations.length > 0) {
-              const bounds = L.latLngBounds(locations);
-              // Add a little padding
-              map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 0.5 });
-              return;
+              const newBounds = L.latLngBounds(locations);
+              map.fitBounds(newBounds, { padding: [50, 50], animate: true, duration: 0.5 });
+          } else if (hasCenterChanged && !isNaN(center[0])) {
+               // Fallback if no valid places to zoom to, but center exists
+               map.flyTo(center, zoom, { duration: 0.5 });
           }
       }
-      
-      // Fallback to center/zoom if no places or forced center
-      // Speed enhancement: Reduced duration from 1.2 to 0.5 for snappier feel
-      map.flyTo(center, zoom, { duration: 0.5, easeLinearity: 0.25 });
-  }, [places, center, zoom, map]);
+      // C. Priority: Explicit Center Change (User Click)
+      else if (hasCenterChanged && !isNaN(center[0])) {
+           map.flyTo(center, zoom, { duration: 0.5, easeLinearity: 0.25 });
+      }
 
-  // 3. Explicit Bounds (Overview Mode)
-  useEffect(() => {
-    if (bounds) {
-        map.fitBounds(bounds, { padding: [50, 50] });
-    }
-  }, [bounds, map]);
+      // Update Refs
+      prevCenterRef.current = centerKey;
+      prevPlacesLenRef.current = places ? places.length : 0;
+      prevOverviewRef.current = !!isOverview;
+
+  }, [places, center, zoom, map, bounds, isOverview]);
 
   return null;
 };
@@ -93,29 +107,39 @@ const DAY_COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4
 
 export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom, allPlaces, isOverview, stopoverCandidates, onAddPlace }) => {
   
+  // Guard against invalid centers
+  const safeCenter: [number, number] = (!center || isNaN(center[0]) || isNaN(center[1])) 
+    ? [25.0330, 121.5654] 
+    : center;
+
   let mapContent;
   let mapBounds: L.LatLngBounds | undefined;
 
   if (isOverview && allPlaces) {
-      // Collect all points to fit bounds
-      const allPoints = allPlaces.flatMap(d => d.places.map(p => L.latLng(p.lat, p.lng)));
+      // Collect all points to fit bounds, checking validity
+      const allPoints = allPlaces.flatMap(d => d.places
+        .filter(p => !isNaN(p.lat) && !isNaN(p.lng))
+        .map(p => L.latLng(p.lat, p.lng))
+      );
+      
       if (allPoints.length > 0) {
           mapBounds = L.latLngBounds(allPoints);
       }
 
       mapContent = allPlaces.map((day, dayIdx) => {
           const color = DAY_COLORS[dayIdx % DAY_COLORS.length];
-          const polyPositions = day.places.map(p => [p.lat, p.lng] as [number, number]);
+          const validPlaces = day.places.filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+          const polyPositions = validPlaces.map(p => [p.lat, p.lng] as [number, number]);
           
           return (
               <React.Fragment key={dayIdx}>
-                  {day.places.length > 1 && (
+                  {validPlaces.length > 1 && (
                       <Polyline 
                         positions={polyPositions} 
                         pathOptions={{ color: color, weight: 3, opacity: 0.8 }} 
                       />
                   )}
-                  {day.places.map((place, idx) => (
+                  {validPlaces.map((place, idx) => (
                       <Marker
                         key={`${dayIdx}-${place.id}`}
                         position={[place.lat, place.lng]}
@@ -131,7 +155,9 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
       });
   } else {
       // Single Day View
-      const polylinePositions = places.map(place => [place.lat, place.lng] as [number, number]);
+      const validPlaces = places.filter(p => !isNaN(p.lat) && !isNaN(p.lng));
+      const polylinePositions = validPlaces.map(place => [place.lat, place.lng] as [number, number]);
+      
       let indexCounter = 0;
       const getMarkerIndex = (place: Place) => {
         if (place.type === 'flight') return undefined;
@@ -141,13 +167,13 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
 
       mapContent = (
           <>
-            {places.length > 1 && (
+            {validPlaces.length > 1 && (
                 <Polyline 
                 positions={polylinePositions} 
                 pathOptions={{ color: '#3b82f6', weight: 4, opacity: 0.7, dashArray: '10, 10', lineCap: 'round' }} 
                 />
             )}
-            {places.map((place) => (
+            {validPlaces.map((place) => (
                 <Marker 
                     key={place.id} 
                     position={[place.lat, place.lng]}
@@ -172,7 +198,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
             ))}
 
             {/* Stopover Candidates (Green Pins) */}
-            {stopoverCandidates && stopoverCandidates.map((place, idx) => (
+            {stopoverCandidates && stopoverCandidates.filter(p => !isNaN(p.lat) && !isNaN(p.lng)).map((place, idx) => (
                 <Marker
                     key={`stopover-${idx}`}
                     position={[place.lat, place.lng]}
@@ -195,24 +221,22 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
                                 <p className="text-xs text-gray-500 mb-2">{place.address}</p>
                                 <p className="text-xs text-gray-600 mb-3">{place.remarks}</p>
                                 
-                                <div className="flex flex-col gap-2">
-                                    {onAddPlace && (
-                                        <button
-                                            onClick={() => onAddPlace({ ...place, id: crypto.randomUUID() })}
-                                            className="w-full flex items-center justify-center gap-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 py-2 rounded transition-colors shadow-sm"
-                                        >
-                                            <PlusCircle size={14} /> Add to Itinerary
-                                        </button>
-                                    )}
-                                    <a 
-                                        href={`https://www.youtube.com/results?search_query=${encodeURIComponent(place.name + " travel guide")}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center justify-center gap-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 py-2 rounded transition-colors"
+                                {onAddPlace && (
+                                    <button
+                                        onClick={() => onAddPlace({ ...place, id: crypto.randomUUID(), type: 'activity' })}
+                                        className="w-full flex items-center justify-center gap-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 py-2 rounded transition-colors shadow-sm mb-2"
                                     >
-                                        <Youtube size={14} /> Watch on YouTube
-                                    </a>
-                                </div>
+                                        <PlusCircle size={14} /> Add to Itinerary
+                                    </button>
+                                )}
+                                <a 
+                                    href={`https://www.youtube.com/results?search_query=${encodeURIComponent(place.name + " travel guide")}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center justify-center gap-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 py-2 rounded transition-colors"
+                                >
+                                    <Youtube size={14} /> Watch on YouTube
+                                </a>
                             </div>
                         </div>
                     </Popup>
@@ -224,7 +248,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
 
   return (
     <MapContainer
-      center={center}
+      center={safeCenter}
       zoom={zoom}
       style={{ height: "100%", width: "100%", zIndex: 0 }}
       zoomControl={false}
@@ -235,7 +259,13 @@ export const MapComponent: React.FC<MapComponentProps> = ({ places, center, zoom
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
       />
-      <MapController center={center} zoom={zoom} bounds={mapBounds} places={!isOverview ? places : undefined} />
+      <MapController 
+        center={safeCenter} 
+        zoom={zoom} 
+        bounds={mapBounds} 
+        places={!isOverview ? places : undefined} 
+        isOverview={isOverview}
+      />
       {mapContent}
     </MapContainer>
   );

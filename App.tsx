@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import {
   DndContext,
@@ -325,9 +326,12 @@ export const App: React.FC = () => {
   // --- Map and Place Handlers ---
 
   const handlePlaceClick = (place: Place) => {
-    setMapCenter([place.lat, place.lng]);
+    // Only update map center if valid coords. This will trigger the FlyTo logic in MapComponent
+    if (!isNaN(place.lat) && !isNaN(place.lng)) {
+        setMapCenter([place.lat, place.lng]);
+    }
     setActivePlace(place);
-    setMobileView('map'); // Switch to map view on mobile when clicking a place
+    setMobileView('map');
   };
 
   const handleAddPlace = (newPlace: Place) => {

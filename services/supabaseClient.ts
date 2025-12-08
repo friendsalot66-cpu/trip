@@ -1,4 +1,5 @@
 
+
 import { createClient } from '@supabase/supabase-js';
 import { Trip, DayItinerary } from '../types';
 
@@ -21,7 +22,7 @@ export const fetchTrips = async (): Promise<Trip[]> => {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('Error fetching trips:', error);
+    console.error('Error fetching trips:', error.message || error);
     // Return empty array on error to prevent app crash
     return [];
   }
@@ -67,7 +68,7 @@ export const createTrip = async (destination: string, startDate: string, endDate
     .single();
 
   if (error) {
-    console.error('Error creating trip:', error);
+    console.error('Error creating trip:', error.message || error);
     throw error;
   }
   
@@ -96,7 +97,7 @@ export const updateTripItinerary = async (tripId: string, itinerary: DayItinerar
     .eq('id', tripId);
 
   if (error) {
-    console.error('Error updating itinerary:', error);
+    console.error('Error updating itinerary:', error.message || error);
     throw error;
   }
 };
@@ -110,7 +111,7 @@ export const updateTripTitle = async (tripId: string, title: string) => {
     .eq('id', tripId);
 
   if (error) {
-    console.error('Error updating title:', error);
+    console.error('Error updating title:', error.message || error);
     throw error;
   }
 };
@@ -128,7 +129,7 @@ export const uploadTripCover = async (tripId: string, file: File): Promise<strin
     .upload(filePath, file);
 
   if (uploadError) {
-    console.error('Error uploading image:', uploadError);
+    console.error('Error uploading image:', uploadError.message || uploadError);
     return null;
   }
 
@@ -146,7 +147,7 @@ export const uploadTripCover = async (tripId: string, file: File): Promise<strin
     .eq('id', tripId);
 
   if (dbError) {
-    console.error('Error updating trip with image URL:', dbError);
+    console.error('Error updating trip with image URL:', dbError.message || dbError);
     return null;
   }
 
@@ -162,7 +163,7 @@ export const deleteTrip = async (tripId: string) => {
       .eq('id', tripId);
   
     if (error) {
-      console.error('Error deleting trip:', error);
+      console.error('Error deleting trip:', error.message || error);
       throw error;
     }
   };
